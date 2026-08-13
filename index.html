@@ -744,11 +744,23 @@
         <!-- Step 1: the address -->
         <form id="signinEmailForm" class="signin-step">
           <p class="signin-sub">Your hours are saved to your email, so they survive a new phone or a cleared browser.</p>
+
+          <!-- Name is a label, never a credential. It is only used to fill in
+               your profile, and only when that profile has no name yet, so
+               typing something different next time cannot lock you out and
+               cannot silently rename what you set inside the app. -->
+          <div class="form-group">
+            <label for="signinName">Your name</label>
+            <input type="text" id="signinName" autocomplete="name" autocapitalize="words"
+                   placeholder="Aathishwar" maxlength="40">
+          </div>
+
           <div class="form-group">
             <label for="signinEmail">Email</label>
             <input type="email" id="signinEmail" inputmode="email" autocomplete="email"
                    placeholder="you@example.com" required>
           </div>
+
           <button type="submit" class="btn btn-primary full" id="signinSendBtn">Send me a code</button>
           <p class="signin-note">No password, no sign-up. We email a 6-digit code.</p>
         </form>

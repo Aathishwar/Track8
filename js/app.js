@@ -580,6 +580,48 @@
   /* ------------------------------------------------------------- sign in */
 
   var signinEmail = '';
+  var signinName = '';
+
+  // What store.js calls a profile before anybody has named it.
+  var DEFAULT_PROFILE_NAME = 'Me';
+
+  /**
+   * Put the typed name on the profile, but only if the profile has none.
+   *
+   * The name is a label, not a credential: it is never sent to the sign-in
+   * endpoints and never decides whether a code is accepted, so typing it
+   * differently next time cannot lock anyone out. It is also not allowed to
+   * overwrite a name the user has since set inside the app, or on another
+   * device - a typo at the sign-in screen would otherwise quietly rename them
+   * everywhere. Runs after the first sync so that a name already on the
+   * account has arrived and can win.
+   */
+  function applySigninName() {
+    if (!signinName) return;
+    var person = Store.activePerson();
+    if (!person) return;
+    if (person.name && person.name !== DEFAULT_PROFILE_NAME) return;
+
+    Store.renamePerson(person.id, signinName, person.role || '');
+    UI.renderPersonHeader();
+    Sync.schedule('named', 300);
+  }
+
+  /**
+   * Clear the form so a later sign-in starts clean.
+   *
+   * Without this the name box still held whatever was typed last time, which
+   * after an in-app rename is the stale one - offering back a name the user
+   * has already replaced.
+   */
+  function resetSigninForm() {
+    signinEmail = '';
+    signinName = '';
+    el.signinName.value = '';
+    el.signinEmail.value = '';
+    el.signinCode.value = '';
+    showSigninStep('email');
+  }
 
   function showSigninError(message) {
     el.signinError.textContent = message;
@@ -606,13 +648,24 @@
     var s = Sync.status();
     var show = s.checked && s.available && !s.signedIn && s.online;
     el.signinScreen.hidden = !show;
-    if (show && el.signinCodeForm.hidden && el.signinEmailForm.hidden) showSigninStep('email');
+
+    if (show) {
+      // Someone who has already been using the app locally has a name; offer
+      // it back rather than making them type it again.
+      var person = Store.activePerson();
+      if (person && person.name && person.name !== DEFAULT_PROFILE_NAME && !el.signinName.value) {
+        el.signinName.value = person.name;
+      }
+      if (el.signinCodeForm.hidden && el.signinEmailForm.hidden) showSigninStep('email');
+    }
   }
 
   function sendSigninCode(event) {
     if (event) event.preventDefault();
     var email = el.signinEmail.value.trim();
     if (!email) return;
+
+    signinName = el.signinName.value.trim();
 
     el.signinSendBtn.disabled = true;
     el.signinSendBtn.textContent = 'Sending…';
@@ -654,6 +707,9 @@
         return Sync.run('after-signin');
       })
       .then(function () {
+        // After the pull, so a name already on the account wins over the one
+        // just typed.
+        applySigninName();
         renderAll();
       })
       .catch(function (e) {
@@ -991,6 +1047,7 @@
     el.signOutBtn.addEventListener('click', function () {
       if (!global.confirm('Sign out? Your hours stay on this device, and stop syncing.')) return;
       Sync.signOut().then(function () {
+        resetSigninForm();
         UI.fillSettingsForm(Notify);
         updateSigninGate();
       });

@@ -1489,11 +1489,11 @@ body.modal-open {
   text-transform: none;
 }
 
-input[type="text"],
-input[type="time"],
-input[type="number"],
-input[type="email"],
-input[type="tel"] {
+/* Every text-ish input, matched by exclusion rather than by listing types.
+   The previous rule named three types, so `email` fell through to the browser
+   default and rendered as a white box on the sign-in screen. Anything added
+   later — url, search, password — is covered without touching this again. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]) {
   width: 100%;
   min-height: 44px;
   padding: 0 12px;
@@ -1503,6 +1503,25 @@ input[type="tel"] {
   color: var(--text-primary);
   font: inherit;
   font-size: 15px; /* 16px-ish keeps iOS from zooming the page on focus */
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input::placeholder {
+  color: var(--text-muted);
+  opacity: 1;   /* Firefox dims placeholders further by default */
+}
+
+/* Chrome paints its own pale-blue fill over autofilled inputs, which on a dark
+   form looks like a rendering fault. There is no property to turn that off;
+   an inset shadow the size of the field is the standard way to cover it. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--text-primary);
+  -webkit-box-shadow: 0 0 0 1000px var(--bg-primary) inset;
+  caret-color: var(--text-primary);
+  transition: background-color 9999s ease-in-out 0s;
 }
 
 input:focus {
@@ -1964,11 +1983,42 @@ input:focus {
 
 .signin-card {
   width: 100%;
-  max-width: 380px;
+  max-width: 340px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
   animation: view-in var(--motion-base) var(--ease-out) both;
+}
+
+/* The sign-in fields are the first thing anyone sees, so they get more room
+   than the dense settings rows this stylesheet is otherwise tuned for. */
+.signin-card .form-group {
+  margin-bottom: 12px;
+}
+
+.signin-card .form-group label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+
+.signin-card input {
+  min-height: 50px;
+  padding: 0 14px;
+  font-size: 16px;   /* below 16px iOS zooms the page on focus */
+  background: var(--bg-surface);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.signin-card input:focus {
+  background: var(--bg-surface-elevated);
+}
+
+.signin-card .btn.full {
+  margin-top: 6px;
+  min-height: 50px;
+  font-size: 15px;
 }
 
 .signin-logo {

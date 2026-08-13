@@ -156,7 +156,7 @@
       'permCard', 'permTitle', 'permSteps', 'permSite', 'permSiteUrl', 'copySiteBtn', 'recheckNotifyBtn',
       'keepAliveWarning', 'batterySteps', 'vibrateNote', 'pushStatus',
       'sumReminders', 'sumWorkday', 'sumProfile', 'sumInstall', 'sumAccount',
-      'signinScreen', 'signinEmailForm', 'signinCodeForm', 'signinEmail', 'signinCode',
+      'signinScreen', 'signinEmailForm', 'signinCodeForm', 'signinEmail', 'signinCode', 'signinName',
       'signinSendBtn', 'signinVerifyBtn', 'signinResendBtn', 'signinBackBtn',
       'signinSentTo', 'signinError',
       'syncStatusText', 'syncNowBtn', 'signOutBtn',
