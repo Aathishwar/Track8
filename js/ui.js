@@ -1,0 +1,1070 @@
+/**
+ * Track8 - Rendering
+ *
+ * All DOM writing lives here. Split into a cheap per-second path (the ring and
+ * the digits, which are the only things that change while a shift runs) and
+ * expensive paths for the week, calendar and profile views that only run when
+ * their underlying data actually changed.
+ *
+ * The previous version rebuilt the whole calendar and rewrote all of storage
+ * once per second, which is a real battery cost on a phone that is meant to be
+ * sitting in a pocket.
+ */
+(function (global) {
+  'use strict';
+
+  var TL = global.T8Timeline;
+  var Store = global.T8Store;
+
+  var RING_RADIUS = 92;
+  var CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
+
+  // Histogram geometry, kept in sync with styles.css. BAR_BASE_PX is the gap
+  // between the wrapper's bottom edge and the bottom of a bar track: the
+  // day-label row plus the flex gap above it.
+  var BAR_TRACK_PX = 140;
+  var BAR_BASE_PX = 22 + 4;
+
+  var el = {};
+
+  var STATE_LABEL = {
+    IDLE: 'Ready to start',
+    WORKING: 'Working',
+    MEETING: 'In a meeting',
+    BREAK: 'On short break',
+    LUNCH: 'On lunch',
+    PAUSED: 'Paused',
+    ENDED: 'Day complete'
+  };
+
+  var STATE_CLASS = {
+    IDLE: 'status-idle',
+    WORKING: 'status-working',
+    MEETING: 'status-meeting',
+    BREAK: 'status-break',
+    LUNCH: 'status-lunch',
+    PAUSED: 'status-paused',
+    ENDED: 'status-finished'
+  };
+
+  // Bottom-to-top order of the stacked week bars. Work sits at the bottom so
+  // the goal line, measured from the baseline, lands on the credited portion.
+  var STACK_ORDER = [
+    { key: 'workMs', klass: 'seg-work', label: 'Work' },
+    { key: 'meetingMs', klass: 'seg-meeting', label: 'Meetings' },
+    { key: 'breakMs', klass: 'seg-break', label: 'Breaks' },
+    { key: 'lunchMs', klass: 'seg-lunch', label: 'Lunch' }
+  ];
+
+  /* ------------------------------------------------------------ formatting */
+
+  function escapeHtml(value) {
+    return String(value == null ? '' : value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  /** HH:MM:SS for the main stopwatch readout. */
+  function hms(ms) {
+    var total = Math.max(0, Math.floor(ms / 1000));
+    var h = Math.floor(total / 3600);
+    var m = Math.floor((total % 3600) / 60);
+    var s = total % 60;
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  /** "6h 32m" for totals people read rather than watch. */
+  function hm(ms) {
+    var total = Math.max(0, Math.floor(ms / 60000));
+    return Math.floor(total / 60) + 'h ' + String(total % 60).padStart(2, '0') + 'm';
+  }
+
+  /** "8h" / "7h 30m" — for tight labels where "8h 00m" is noise. */
+  function compactHours(ms) {
+    var total = Math.max(0, Math.floor(ms / 60000));
+    var h = Math.floor(total / 60);
+    var m = total % 60;
+    return m === 0 ? h + 'h' : h + 'h ' + m + 'm';
+  }
+
+  /** "32m" / "1h 04m" for short durations like breaks. */
+  function shortDuration(ms) {
+    var minutes = Math.max(0, Math.floor(ms / 60000));
+    if (minutes < 60) return minutes + 'm';
+    return Math.floor(minutes / 60) + 'h ' + String(minutes % 60).padStart(2, '0') + 'm';
+  }
+
+  function clockTime(ms) {
+    if (!ms) return '--:--';
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  /** Signed balance against a target, e.g. "+1h 15m" or "-45m". */
+  function signedBalance(ms) {
+    var sign = ms < 0 ? '-' : '+';
+    return sign + shortDuration(Math.abs(ms));
+  }
+
+  function targetMs() {
+    return Store.settings().dailyTargetMinutes * 60000;
+  }
+
+  /**
+   * Never measure a day past its own midnight.
+   *
+   * A shift someone forgot to end last Tuesday must report Tuesday's hours, not
+   * every hour since. Used by the recovery banner and the correction form; the
+   * Excel export applies the same rule in report.js.
+   */
+  function clampToDay(dateKey, now) {
+    return Math.min(now, TL.nextMidnightOf(dateKey));
+  }
+
+  /* ---------------------------------------------------------- DOM caching */
+
+  function cache() {
+    [
+      'appRoot', 'brandTargetBadge', 'personSelectBtn', 'headerAvatar', 'currentPersonName',
+      'personDropdown', 'personList', 'openAddPersonModal', 'notifyBtn', 'notifyDot',
+      'viewTimer', 'viewWeek', 'viewCalendar',
+      'currentDayName', 'currentFullDate', 'statusPill', 'statusText',
+      'progressRingFill', 'timerDigits', 'timerAnnouncement', 'loggedHoursText', 'targetGoalText',
+      'percentageBadge', 'breakDurationText', 'lunchDurationText', 'pausedDurationText',
+      'breakBanner', 'breakBannerTitle', 'breakBannerMeta', 'breakBannerAction',
+      'reminderStatus', 'meetingDurationText',
+      'btnStart', 'btnResume', 'btnBreak', 'btnLunch', 'btnPause', 'btnEnd',
+      'btnMeeting', 'btnLogMeeting', 'btnEndMeeting', 'btnEndMeetingText',
+      'btnReopen', 'btnEditToday',
+      'clockInText', 'clockOutText',
+      'openShiftBanner', 'openShiftText', 'openShiftEndBtn', 'openShiftDismissBtn',
+      'weeklyAverageText', 'histogramBars', 'weekRangeText',
+      'weekTotalText', 'weekTargetText', 'weekBalanceText',
+      'calendarMonthTitle', 'calendarDays', 'prevMonthBtn', 'nextMonthBtn',
+      'monthDaysText', 'monthTotalText', 'monthBalanceText',
+      'addPersonModal', 'addPersonForm', 'personNameInput', 'personRoleInput',
+      'closeAddPersonModal', 'cancelAddPerson',
+      'logDetailsModal', 'logModalTitle', 'logDetailsBody', 'closeLogDetailsModal',
+      'editDayModal', 'editDayForm', 'editDayTitle', 'closeEditDayModal',
+      'editStartTime', 'editWorkH', 'editWorkM', 'editMeetingM', 'editBreakM', 'editLunchM',
+      'editNote', 'deleteDayBtn', 'cancelEditDay',
+      'settingsModal', 'closeSettingsModal', 'openSettingsBtn', 'settingsBody',
+      'setDailyTarget', 'setBreakAlert', 'setBreakRepeat', 'setLunchAlert', 'setLunchRepeat',
+      'setKeepAlive', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
+      'permCard', 'permTitle', 'permSteps', 'permSite', 'permSiteUrl', 'copySiteBtn', 'recheckNotifyBtn',
+      'keepAliveWarning', 'batterySteps', 'vibrateNote', 'pushStatus',
+      'sumReminders', 'sumWorkday', 'sumProfile', 'sumInstall',
+      'renamePersonInput', 'renamePersonRole', 'savePersonBtn', 'deletePersonBtn',
+      'exportExcelBtn', 'exportBtn', 'importBtn', 'importFileInput', 'installBtn', 'installHint',
+      'progressRingContainer', 'toastHost'
+    ].forEach(function (id) {
+      el[id] = document.getElementById(id);
+    });
+    return el;
+  }
+
+  /* ------------------------------------------------------------- feedback */
+
+  var toastTimer = null;
+
+  function toast(message, kind) {
+    if (!el.toastHost) return;
+    el.toastHost.textContent = message;
+    el.toastHost.className = 'toast show ' + (kind || 'info');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () {
+      el.toastHost.className = 'toast';
+    }, 3200);
+  }
+
+  /* ------------------------------------------------------------ timer view */
+
+  var lastAnnouncement = '';
+
+  /**
+   * Update the screen-reader live region, but only when something a listener
+   * would care about changes: the status, or the whole minute. The visible
+   * digits tick every second and are aria-hidden precisely so this can stay
+   * quiet in between.
+   */
+  function announce(state, creditedMs) {
+    if (!el.timerAnnouncement) return;
+    var text = (STATE_LABEL[state] || 'Ready to start') + ', ' + hm(creditedMs) + ' of ' + hm(targetMs());
+    if (text === lastAnnouncement) return;
+    lastAnnouncement = text;
+    el.timerAnnouncement.textContent = text;
+  }
+
+  // Which day has already had its "target reached" flourish. Keyed by date so
+  // the animation plays once per day and not once per second thereafter, and
+  // so it plays again tomorrow.
+  var celebratedKey = null;
+
+  function celebrateOnce(node, reached, dateKey) {
+    if (!reached) {
+      // Dropping below target again (a correction, or a reopened day) re-arms
+      // the flourish rather than silently spending it.
+      if (celebratedKey === dateKey) celebratedKey = null;
+      return;
+    }
+    if (celebratedKey === dateKey) return;
+    celebratedKey = dateKey;
+
+    node.classList.remove('celebrate');
+    // Force a reflow so the class re-add restarts the animation. One layout
+    // read, once a day, on a 220px box.
+    void node.offsetWidth;
+    node.classList.add('celebrate');
+    setTimeout(function () { node.classList.remove('celebrate'); }, 1000);
+  }
+
+  /**
+   * The per-second path. Touches text nodes and one stroke offset, nothing
+   * more; no storage writes, no list rebuilds.
+   */
+  function renderTimer(day, now) {
+    var summary = TL.summarize(day, now);
+    var target = targetMs();
+    var state = summary.state;
+
+    // The headline number is credited time: worked plus meetings. Meetings are
+    // work, so they move the ring and count against the daily target.
+    el.timerDigits.textContent = hms(summary.creditedMs);
+    el.loggedHoursText.textContent = hm(summary.creditedMs);
+    el.targetGoalText.textContent = hm(target);
+    el.meetingDurationText.textContent = shortDuration(summary.meetingMs);
+    el.breakDurationText.textContent = shortDuration(summary.breakMs);
+    el.lunchDurationText.textContent = shortDuration(summary.lunchMs);
+    el.pausedDurationText.textContent = shortDuration(summary.pausedMs);
+    el.clockInText.textContent = clockTime(summary.firstIn);
+    el.clockOutText.textContent = clockTime(summary.lastOut);
+
+    var ratio = target > 0 ? summary.creditedMs / target : 0;
+    var percent = Math.round(ratio * 100);
+    el.percentageBadge.textContent = percent + '%';
+    el.percentageBadge.classList.toggle('over', ratio > 1);
+
+    var shown = Math.min(1, ratio);
+    var resting = state === 'BREAK' || state === 'LUNCH' || state === 'PAUSED';
+    el.progressRingFill.style.strokeDasharray = CIRCUMFERENCE;
+    el.progressRingFill.style.strokeDashoffset = CIRCUMFERENCE - CIRCUMFERENCE * shown;
+    el.progressRingFill.classList.toggle('complete', ratio >= 1);
+    el.progressRingFill.classList.toggle('meeting', state === 'MEETING');
+    el.progressRingFill.classList.toggle('resting', resting);
+
+    // The halo behind the ring is a static gradient, lit only while a shift is
+    // actually running, and recoloured to match the stroke.
+    if (el.progressRingContainer) {
+      var ring = el.progressRingContainer;
+      ring.classList.toggle('lit', state !== 'IDLE');
+      ring.classList.toggle('tone-meeting', state === 'MEETING');
+      ring.classList.toggle('tone-resting', resting);
+      celebrateOnce(ring, ratio >= 1, day.dateKey);
+    }
+
+    el.statusPill.className = 'status-pill ' + (STATE_CLASS[state] || 'status-idle');
+    el.statusText.textContent = STATE_LABEL[state] || 'Ready to start';
+
+    announce(state, summary.creditedMs);
+    renderActions(state, TL.previousState(day) === TL.STATES.ENDED);
+    renderBreakBanner(summary);
+
+    return summary;
+  }
+
+  /**
+   * One button per intention, shown only when it applies.
+   *
+   * The old single toggle meant "Pause Work" silently logged a coffee break.
+   * Break, lunch and pause are now separate transitions with separate buckets,
+   * and every button is explicitly re-enabled on each render so no state can
+   * leave one stuck disabled.
+   */
+  /**
+   * `afterHours` means the current meeting was started once the day had
+   * already been ended, so finishing it returns to off-the-clock rather than
+   * back to work, and there is no day left to end.
+   */
+  function renderActions(state, afterHours) {
+    var resting = state === 'BREAK' || state === 'LUNCH' || state === 'PAUSED';
+
+    var show = {
+      btnStart: state === 'IDLE',
+      btnResume: resting,
+      btnMeeting: state === 'WORKING',
+      btnLogMeeting: state === 'ENDED',
+      btnEndMeeting: state === 'MEETING',
+      btnBreak: state === 'WORKING',
+      btnLunch: state === 'WORKING',
+      btnPause: state === 'WORKING',
+      btnEnd: state === 'WORKING' || resting || (state === 'MEETING' && !afterHours),
+      btnReopen: state === 'ENDED',
+      btnEditToday: state === 'ENDED'
+    };
+
+    Object.keys(show).forEach(function (id) {
+      var node = el[id];
+      if (!node) return;
+      node.hidden = !show[id];
+      // Re-enabled on every render: no state may leave a button stuck off.
+      node.disabled = false;
+    });
+
+    if (state === 'MEETING') {
+      el.btnEndMeetingText.textContent = afterHours ? 'Finish meeting' : 'Meeting over, back to work';
+    }
+
+    el.appRoot.setAttribute('data-state', state);
+    el.appRoot.setAttribute('data-after-hours', afterHours ? 'yes' : 'no');
+  }
+
+  /**
+   * The break banner is the in-app half of the reminder. It states elapsed
+   * time and when the next nudge lands, so the rule is visible rather than
+   * something the user has to remember.
+   */
+  function renderBreakBanner(summary) {
+    var resting = summary.state === 'BREAK' || summary.state === 'LUNCH';
+    el.breakBanner.hidden = !resting;
+    if (!resting) return;
+
+    var settings = Store.settings();
+    var isLunch = summary.state === 'LUNCH';
+    var limit = (isLunch ? settings.lunchAlertMinutes : settings.breakAlertMinutes) * 60000;
+    var repeat = (isLunch ? settings.lunchRepeatMinutes : settings.breakRepeatMinutes) * 60000;
+    var label = isLunch ? 'Lunch' : 'Short break';
+
+    el.breakBannerTitle.textContent = label + ' - ' + shortDuration(summary.openMs);
+    el.breakBanner.classList.toggle('over', summary.openMs >= limit);
+    el.breakBannerAction.textContent = 'End ' + (isLunch ? 'lunch' : 'break');
+
+    // Kept to one line at 360px. The old wording spelled out "this time does
+    // not count towards your 8h 00m" on every render of a screen that has to
+    // fit without scrolling; the stat row above already labels this time as a
+    // break, and breaks never counting is the app's whole premise.
+    if (summary.openMs < limit) {
+      el.breakBannerMeta.textContent = 'Reminder in ' + shortDuration(limit - summary.openMs) +
+        ' · not counted';
+    } else {
+      var over = summary.openMs - limit;
+      var nextIn = repeat - (over % repeat);
+      el.breakBannerMeta.textContent = shortDuration(over) + ' over ' +
+        shortDuration(limit) + ' · next nudge in ' + shortDuration(nextIn);
+    }
+  }
+
+  /**
+   * Plain-language summary of which reminder layers are actually live.
+   *
+   * Shown only when it says something the user can act on. When reminders are
+   * simply working, the line was restating the bell icon in three lines of
+   * body text at the bottom of the one screen that has to fit without
+   * scrolling — the bell's own lit state already carries "reminders are on".
+   */
+  function renderReminderStatus(notify) {
+    if (!el.reminderStatus) return;
+
+    var permission = notify.permission();
+    var healthy = notify.supported() && permission === 'granted' && notify.hasServiceWorker();
+    var message = '';
+
+    // A server reminder does not care whether the page survives, so a phone
+    // with push working is fully covered and the line stays hidden.
+    var push = global.T8Push ? global.T8Push.status() : { active: false };
+    healthy = healthy || (push.active && permission === 'granted');
+
+    if (!notify.supported()) {
+      message = 'This browser cannot show notifications. In-app reminders only.';
+    } else if (permission === 'granted' && !notify.hasServiceWorker()) {
+      message = 'Reminders are limited - open the app from a web address, not a file, for background reminders.';
+    } else if (permission === 'denied') {
+      message = 'Notifications are blocked, so you are only reminded while the app is open. Settings shows how to switch them back on.';
+    } else if (permission !== 'granted') {
+      message = 'Notifications are off. Tap the bell to turn on break reminders.';
+    }
+
+    el.reminderStatus.textContent = message;
+    el.reminderStatus.hidden = healthy;
+
+    el.notifyDot.hidden = permission !== 'granted';
+    el.notifyBtn.classList.toggle('enabled', permission === 'granted');
+  }
+
+  /**
+   * Prompt shown when a previous day was left running.
+   *
+   * The elapsed total is clamped to that day's own midnight. Reading it up to
+   * "now" would claim every hour since, which is exactly the invented-time
+   * problem this prompt exists to let the user correct.
+   */
+  function renderOpenShiftBanner(openDay) {
+    el.openShiftBanner.hidden = !openDay;
+    if (!openDay) return;
+
+    var summary = TL.summarize(openDay, clampToDay(openDay.dateKey, Date.now()));
+
+    el.openShiftText.textContent = 'You never ended ' + TL.dateFromKey(openDay.dateKey)
+      .toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }) +
+      '. It shows ' + hm(summary.creditedMs) + ' so far - set the real hours so your totals stay honest.';
+    el.openShiftBanner.dataset.dateKey = openDay.dateKey;
+  }
+
+  /* ------------------------------------------------------------ week view */
+
+  function startOfWeek(date) {
+    var d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    var offset = (d.getDay() + 6) % 7; // Monday = 0
+    d.setDate(d.getDate() - offset);
+    return d;
+  }
+
+  var lastWeekKey = null;
+
+  function renderWeek(weekAnchor, now) {
+    var days = Store.daysOf();
+    var monday = startOfWeek(weekAnchor);
+    var labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    var target = targetMs();
+    var todayKey = TL.dateKeyOf(now);
+
+    var entries = labels.map(function (label, i) {
+      var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      var key = TL.dateKeyOf(d);
+      var day = days[key];
+      var summary = day
+        ? TL.summarize(day, now)
+        : { workMs: 0, meetingMs: 0, breakMs: 0, lunchMs: 0, creditedMs: 0 };
+
+      return {
+        label: label,
+        key: key,
+        date: d,
+        summary: summary,
+        // Only the credited portion is measured against the goal; breaks stack
+        // above the line because they are not part of the target.
+        stackMs: summary.workMs + summary.meetingMs + summary.breakMs + summary.lunchMs,
+        isToday: key === todayKey,
+        isFuture: d.getTime() > now,
+        isWeekend: i >= 5
+      };
+    });
+
+    // Scale to the tallest stack so a long day is not silently clipped flat.
+    var peak = entries.reduce(function (max, e) { return Math.max(max, e.stackMs); }, 0);
+    var scale = Math.max(target * 1.25, peak * 1.1, 1);
+
+    el.histogramBars.innerHTML = '';
+    entries.forEach(function (entry) {
+      var col = document.createElement('div');
+      col.className = 'bar-column' + (entry.isToday ? ' today' : '') + (entry.isFuture ? ' future' : '');
+
+      // Rendered top-down inside a bottom-aligned flex column, so the array is
+      // reversed: work ends up at the base of the bar.
+      var stack = STACK_ORDER.slice().reverse().map(function (part) {
+        var ms = entry.summary[part.key] || 0;
+        if (ms <= 0) return '';
+        var height = Math.min(100, (ms / scale) * 100);
+        return '<span class="bar-seg ' + part.klass + '" style="height:' + height.toFixed(2) + '%"></span>';
+      }).join('');
+
+      col.innerHTML =
+        '<span class="bar-val">' +
+        (entry.summary.creditedMs > 0 ? (entry.summary.creditedMs / 3600000).toFixed(1) + 'h' : '') +
+        '</span>' +
+        '<span class="bar-track"><span class="bar-stack">' + stack + '</span></span>' +
+        '<span class="bar-day">' + entry.label + '</span>';
+
+      col.title = entry.date.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' }) +
+        '\nCounted ' + hm(entry.summary.creditedMs) +
+        ' (work ' + hm(entry.summary.workMs) + ', meetings ' + shortDuration(entry.summary.meetingMs) + ')' +
+        '\nBreaks ' + shortDuration(entry.summary.breakMs) +
+        ', lunch ' + shortDuration(entry.summary.lunchMs);
+
+      el.histogramBars.appendChild(col);
+    });
+
+    // As with the calendar: grow the bars when the week being shown changes,
+    // not on every re-render triggered by an unrelated button press.
+    var weekKey = TL.dateKeyOf(monday);
+    el.histogramBars.classList.toggle('animate', weekKey !== lastWeekKey);
+    lastWeekKey = weekKey;
+
+    // Put the goal line on the same scale as the bars rather than at a fixed
+    // height, so it stays truthful when the scale stretches for a long day.
+    // BAR_TRACK_PX and BAR_LABEL_PX mirror the two fixed heights in styles.css.
+    var goalLine = document.querySelector('.target-line-indicator');
+    if (goalLine) {
+      // The rule is translateY(50%) in CSS, so this offset lands the line's
+      // centre - not its bottom edge - on the target height.
+      var offset = BAR_BASE_PX + BAR_TRACK_PX * Math.min(1, target / scale);
+      goalLine.style.bottom = offset.toFixed(1) + 'px';
+      goalLine.querySelector('.target-label').textContent = compactHours(target);
+    }
+
+    var worked = entries.filter(function (e) { return e.summary.creditedMs > 0; });
+    var totalMs = entries.reduce(function (sum, e) { return sum + e.summary.creditedMs; }, 0);
+    var avgMs = worked.length ? totalMs / worked.length : 0;
+
+    // Target counts weekdays that have already begun, so Wednesday is not
+    // scored against a full five-day week.
+    var elapsedWeekdays = entries.filter(function (e) { return !e.isWeekend && !e.isFuture; }).length;
+    var weekTarget = elapsedWeekdays * target;
+
+    var sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+    el.weekRangeText.textContent =
+      monday.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' - ' +
+      sunday.toLocaleDateString([], { month: 'short', day: 'numeric' });
+
+    el.weeklyAverageText.textContent = 'Avg ' + hm(avgMs) + '/day';
+    el.weekTotalText.textContent = hm(totalMs);
+    el.weekTargetText.textContent = hm(weekTarget);
+
+    var balance = totalMs - weekTarget;
+    el.weekBalanceText.textContent = signedBalance(balance);
+    el.weekBalanceText.className = 'summary-value ' + (balance >= 0 ? 'positive' : 'negative');
+  }
+
+  /* -------------------------------------------------------- calendar view */
+
+  var lastCalendarMonth = null;
+
+  function renderCalendar(monthAnchor, now) {
+    var days = Store.daysOf();
+    var year = monthAnchor.getFullYear();
+    var month = monthAnchor.getMonth();
+    var target = targetMs();
+    var todayKey = TL.dateKeyOf(now);
+
+    el.calendarMonthTitle.textContent = monthAnchor.toLocaleDateString([], { month: 'long', year: 'numeric' });
+
+    var firstIndex = (new Date(year, month, 1).getDay() + 6) % 7;
+    var totalDays = new Date(year, month + 1, 0).getDate();
+
+    var fragment = document.createDocumentFragment();
+
+    for (var pad = 0; pad < firstIndex; pad++) {
+      var empty = document.createElement('div');
+      empty.className = 'cal-day-cell empty';
+      fragment.appendChild(empty);
+    }
+
+    var monthWorkMs = 0;
+    var monthDaysWorked = 0;
+    var monthTargetMs = 0;
+
+    for (var dayNum = 1; dayNum <= totalDays; dayNum++) {
+      var date = new Date(year, month, dayNum);
+      var key = TL.dateKeyOf(date);
+      var day = days[key];
+      var creditedMs = day ? TL.summarize(day, now).creditedMs : 0;
+      var isWeekend = date.getDay() === 0 || date.getDay() === 6;
+      var isFuture = date.getTime() > now && key !== todayKey;
+
+      if (creditedMs > 0) {
+        monthWorkMs += creditedMs;
+        monthDaysWorked++;
+      }
+      if (!isWeekend && !isFuture) monthTargetMs += target;
+
+      var tone = 'dot-off';
+      if (creditedMs >= target) tone = 'dot-completed';
+      else if (creditedMs > 0) tone = 'dot-partial';
+      else if (isFuture) tone = 'dot-future';
+      else if (isWeekend) tone = 'dot-weekend';
+
+      var cell = document.createElement('div');
+      cell.className = 'cal-day-cell' +
+        (key === todayKey ? ' today' : '') +
+        (isFuture ? ' future' : '') +
+        (isWeekend ? ' weekend' : '');
+
+      // Days that have not happened yet are inert: no data-date-key means the
+      // delegated click handler finds nothing, so no empty "add a record"
+      // dialog for a date nobody can have worked.
+      if (isFuture) {
+        cell.setAttribute('aria-disabled', 'true');
+      } else {
+        cell.setAttribute('role', 'button');
+        cell.setAttribute('tabindex', '0');
+        cell.setAttribute('aria-label',
+          date.toLocaleDateString([], { weekday: 'long', month: 'long', day: 'numeric' }) +
+          (creditedMs > 0 ? ', ' + hm(creditedMs) + ' logged' : ', no record'));
+        cell.dataset.dateKey = key;
+      }
+
+      cell.innerHTML =
+        '<span class="cal-day-num">' + dayNum + '</span>' +
+        '<span class="cal-status-dot ' + tone + '"></span>';
+
+      // Stagger index for the reveal. Capped so a 31-day month finishes in
+      // about a quarter of a second instead of trickling in.
+      cell.style.setProperty('--i', Math.min(dayNum, 34));
+
+      fragment.appendChild(cell);
+    }
+
+    el.calendarDays.innerHTML = '';
+    el.calendarDays.appendChild(fragment);
+
+    // Only stagger when the month on screen actually changed. renderAll() runs
+    // on every button press, and re-playing the reveal because someone started
+    // a break would be noise.
+    var monthId = year + '-' + month;
+    el.calendarDays.classList.toggle('animate', monthId !== lastCalendarMonth);
+    lastCalendarMonth = monthId;
+
+    el.monthDaysText.textContent = monthDaysWorked + (monthDaysWorked === 1 ? ' day' : ' days');
+    el.monthTotalText.textContent = hm(monthWorkMs);
+
+    var balance = monthWorkMs - monthTargetMs;
+    el.monthBalanceText.textContent = signedBalance(balance);
+    el.monthBalanceText.className = 'summary-value ' + (balance >= 0 ? 'positive' : 'negative');
+  }
+
+  /* ------------------------------------------------------------- profiles */
+
+  function renderPersonHeader() {
+    var person = Store.activePerson();
+    el.currentPersonName.textContent = person.name;
+    el.headerAvatar.textContent = person.name.trim().charAt(0).toUpperCase() || '?';
+  }
+
+  function renderPersonList() {
+    var active = Store.get().activePersonId;
+    el.personList.innerHTML = Store.persons().map(function (person) {
+      return '<button type="button" class="person-item' + (person.id === active ? ' active' : '') +
+        '" data-person-id="' + escapeHtml(person.id) + '">' +
+        '<span class="avatar-sm">' + escapeHtml(person.name.trim().charAt(0).toUpperCase() || '?') + '</span>' +
+        '<span class="person-item-text">' +
+        '<span class="person-item-name">' + escapeHtml(person.name) + '</span>' +
+        (person.role ? '<span class="person-item-role">' + escapeHtml(person.role) + '</span>' : '') +
+        '</span>' +
+        (person.id === active ? '<span class="person-check">✓</span>' : '') +
+        '</button>';
+    }).join('');
+  }
+
+  /* ---------------------------------------------------------- day details */
+
+  function renderDayDetails(dateKey, now) {
+    var day = Store.getDay(dateKey);
+    var date = TL.dateFromKey(dateKey);
+    el.logModalTitle.textContent = date.toLocaleDateString([], {
+      weekday: 'long', month: 'long', day: 'numeric', year: 'numeric'
+    });
+
+    if (!day || !day.events.length) {
+      el.logDetailsBody.innerHTML =
+        '<p class="empty-note">No record for this day.</p>' +
+        '<button type="button" class="btn btn-secondary full" data-edit-day="' + escapeHtml(dateKey) + '">Add a record</button>';
+      return;
+    }
+
+    var summary = TL.summarize(day, now);
+    var target = targetMs();
+    var balance = summary.creditedMs - target;
+
+    var rows = [
+      ['Counted towards the day', hm(summary.creditedMs), 'accent'],
+      ['Against ' + compactHours(target), signedBalance(balance), balance >= 0 ? 'positive' : 'negative'],
+      ['Desk work', hm(summary.workMs), ''],
+      ['Meetings', shortDuration(summary.meetingMs), ''],
+      ['Clocked in', clockTime(summary.firstIn), ''],
+      ['Clocked out', summary.lastOut ? clockTime(summary.lastOut) : 'still open', ''],
+      ['Short breaks', shortDuration(summary.breakMs), ''],
+      ['Lunch', shortDuration(summary.lunchMs), ''],
+      ['Paused', shortDuration(summary.pausedMs), '']
+    ];
+
+    var timeline = TL.segmentsOf(day, now).map(function (seg) {
+      return '<li class="timeline-row seg-' + seg.state.toLowerCase() + '">' +
+        '<span class="timeline-time">' + clockTime(seg.from) + ' - ' + clockTime(seg.to) + '</span>' +
+        '<span class="timeline-state">' + STATE_LABEL[seg.state] + '</span>' +
+        '<span class="timeline-dur">' + shortDuration(seg.ms) + '</span>' +
+        '</li>';
+    }).join('');
+
+    el.logDetailsBody.innerHTML =
+      rows.map(function (row) {
+        return '<div class="detail-row">' +
+          '<span class="detail-label">' + escapeHtml(row[0]) + '</span>' +
+          '<span class="detail-val ' + row[2] + '">' + escapeHtml(row[1]) + '</span>' +
+          '</div>';
+      }).join('') +
+      (day.imported ? '<p class="empty-note">Imported from an older version - exact times were estimated.</p>' : '') +
+      (day.note ? '<p class="day-note">' + escapeHtml(day.note) + '</p>' : '') +
+      '<h4 class="timeline-heading">Timeline</h4>' +
+      '<ul class="timeline-list">' + timeline + '</ul>' +
+      '<button type="button" class="btn btn-secondary full" data-edit-day="' + escapeHtml(dateKey) + '">Correct this day</button>';
+  }
+
+  /** Load a day into the manual-correction form. */
+  function fillEditForm(dateKey, now) {
+    var day = Store.getDay(dateKey);
+    var date = TL.dateFromKey(dateKey);
+    el.editDayTitle.textContent = 'Correct ' + date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+    el.editDayForm.dataset.dateKey = dateKey;
+
+    // Clamped like the banner: an unclamped stale day prefilled "74" hours,
+    // which fails the field's max="24" and left Save doing nothing - dead-ending
+    // the exact flow the recovery banner exists to make easy.
+    var summary = day ? TL.summarize(day, clampToDay(dateKey, now)) : null;
+    var startMs = (summary && summary.firstIn) || (date.getTime() + 9 * 3600000);
+    var start = new Date(startMs);
+
+    el.editStartTime.value = String(start.getHours()).padStart(2, '0') + ':' + String(start.getMinutes()).padStart(2, '0');
+    el.editWorkH.value = summary ? Math.floor(summary.workMs / 3600000) : 8;
+    el.editWorkM.value = summary ? Math.floor((summary.workMs % 3600000) / 60000) : 0;
+    el.editMeetingM.value = summary ? Math.round(summary.meetingMs / 60000) : 0;
+    el.editBreakM.value = summary ? Math.round(summary.breakMs / 60000) : 0;
+    el.editLunchM.value = summary ? Math.round(summary.lunchMs / 60000) : 0;
+    el.editNote.value = (day && day.note) || '';
+    el.deleteDayBtn.hidden = !day;
+  }
+
+  /* ------------------------------------------------------------- settings */
+
+  /**
+   * Where the user has to go to unblock notifications.
+   *
+   * Worth stating plainly, because it constrains everything below: no web API
+   * can open the browser's or the operating system's notification settings. A
+   * page cannot navigate to `chrome://settings/...` either — Chrome blocks
+   * that as a navigation target from web content. So the best a web app can
+   * honestly do is name the exact path on the platform the user is standing
+   * on, and then notice the moment they come back having changed it, which is
+   * what the permission watcher in app.js does.
+   *
+   * The path genuinely differs between an installed PWA and a browser tab: an
+   * installed app gets its own entry in Android's app settings, while a tab's
+   * permission lives under the browser's per-site settings.
+   */
+  function unblockSteps() {
+    var ua = navigator.userAgent || '';
+    var installed = global.matchMedia && global.matchMedia('(display-mode: standalone)').matches;
+    var iOS = /iPad|iPhone|iPod/.test(ua) ||
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    var android = /Android/.test(ua);
+
+    if (iOS) {
+      return installed
+        ? ['Open the iPhone <strong>Settings</strong> app.',
+           'Tap <strong>Notifications</strong>.',
+           'Find <strong>Track8</strong> in the list and turn <strong>Allow Notifications</strong> on.']
+        : ['Notifications only work once Track8 is on your Home Screen.',
+           'Tap <strong>Share</strong>, then <strong>Add to Home Screen</strong>.',
+           'Open it from the Home Screen icon and allow notifications when asked.'];
+    }
+
+    if (android) {
+      return installed
+        ? ['Press and hold the <strong>Track8</strong> icon on your home screen.',
+           'Tap <strong>App info</strong> (the ⓘ button).',
+           'Tap <strong>Notifications</strong> and turn them on.']
+        : ['Tap the <strong>lock or tune icon</strong> to the left of the web address.',
+           'Tap <strong>Permissions</strong>, then <strong>Notifications</strong>.',
+           'Set it to <strong>Allow</strong>, then come back here.'];
+    }
+
+    return ['Click the <strong>lock or tune icon</strong> to the left of the web address.',
+            'Find <strong>Notifications</strong> and set it to <strong>Allow</strong>.',
+            'Reload this page.'];
+  }
+
+  /**
+   * The permission state gets a card rather than a sentence, because it is the
+   * one setting in the app that can be switched off from outside the app and
+   * leave every reminder silently dead.
+   */
+  function renderNotifyCard(notify) {
+    if (!el.permCard) return;
+
+    var perm = notify.permission();
+    var blocked = perm === 'denied';
+
+    el.permCard.className = 'perm-card' +
+      (perm === 'granted' ? ' granted' : '') +
+      (blocked ? ' denied' : '');
+
+    el.permTitle.textContent = {
+      granted: 'Reminders are on',
+      denied: 'Reminders are blocked',
+      unsupported: 'Reminders are unavailable'
+    }[perm] || 'Reminders are off';
+
+    el.notifyStatusText.textContent = {
+      granted: notify.hasServiceWorker()
+        ? 'A pinned notification stays in your shade for the whole break, and you are nudged if it runs long.'
+        : 'On, but limited — open Track8 from a web address rather than a file for background reminders.',
+      denied: 'This site was blocked from sending notifications, so you will only be reminded while the app is open on screen. Your browser will not let a web page undo that, so it has to be switched back on from the settings below.',
+      unsupported: 'This browser cannot show notifications at all. Track8 will still remind you in the app.'
+    }[perm] || 'Break and lunch reminders are switched off. Turn them on to be nudged when a break runs long.';
+
+    if (blocked) {
+      el.permSteps.innerHTML = unblockSteps().map(function (step) {
+        return '<li>' + step + '</li>';
+      }).join('');
+      el.permSteps.hidden = false;
+      el.permSiteUrl.textContent = global.location.origin + global.location.pathname;
+      el.permSite.hidden = false;
+    } else {
+      el.permSteps.hidden = true;
+      el.permSite.hidden = true;
+    }
+
+    // The old form left "Turn on notifications" visible while blocked, where
+    // tapping it did nothing at all: requestPermission() returns 'denied'
+    // without prompting once the user has refused. Blocked state gets "Check
+    // again" instead, which re-reads the permission after they have been to
+    // settings.
+    el.enableNotifyBtn.hidden = perm === 'granted' || perm === 'unsupported' || blocked;
+    el.recheckNotifyBtn.hidden = !blocked;
+    el.testNotifyBtn.hidden = perm !== 'granted';
+  }
+
+  /**
+   * Explain a background reminder that never arrived, and what to change.
+   *
+   * Shown only after the phone has actually been caught suspending the
+   * keep-alive, so it reads as the explanation for something the user just
+   * experienced rather than a permanent warning about something that might.
+   * Every step here is a phone setting; none of it can be done from a web page.
+   */
+  /**
+   * Say which layer is actually protecting this phone.
+   *
+   * When the server holds the reminder, the on-device workarounds below it
+   * stop mattering and the battery warning would be noise — so it is
+   * suppressed. When the server is not there, this line is what tells the user
+   * they are relying on the phone's goodwill.
+   */
+  function renderPushStatus() {
+    if (!el.pushStatus) return;
+    var push = global.T8Push ? global.T8Push.status() : { supported: false, active: false };
+
+    if (push.active) {
+      el.pushStatus.textContent = 'Reminders are sent from the server, so they arrive even if your phone stops the app. Nothing below is needed.';
+    } else if (!push.supported) {
+      el.pushStatus.textContent = 'This browser cannot receive reminders from the server, so they run on the phone.';
+    } else {
+      el.pushStatus.textContent = 'Reminders are running on this phone only. They can be stopped by your battery settings.';
+    }
+    return push;
+  }
+
+  function renderKeepAliveStatus(notify) {
+    if (!el.keepAliveWarning) return;
+
+    var push = renderPushStatus();
+    var interrupted = notify.keepAliveWasInterrupted && notify.keepAliveWasInterrupted();
+    el.keepAliveWarning.hidden = !interrupted || !Store.settings().keepAliveEnabled ||
+      (push && push.active);
+
+    if (interrupted && el.batterySteps) {
+      var ua = navigator.userAgent || '';
+      var steps = /Android/.test(ua)
+        ? ['Open <strong>Settings</strong> → <strong>Apps</strong> → <strong>Track8</strong> (or Chrome, if you have not installed Track8).',
+           'Tap <strong>Battery</strong> and choose <strong>Unrestricted</strong>.',
+           'On Xiaomi, Oppo, Vivo, Realme or OnePlus, also turn on <strong>Autostart</strong> and set battery saver to <strong>No restrictions</strong>.']
+        : ['iPhones suspend background pages regardless of settings.',
+           'The pinned notification and the catch-up reminder when you reopen the app still work.'];
+
+      el.batterySteps.innerHTML = steps.map(function (s) { return '<li>' + s + '</li>'; }).join('');
+    }
+
+    if (el.vibrateNote) {
+      el.vibrateNote.textContent = notify.vibrationSupported()
+        ? 'Phones can override this from the notification settings for this app.'
+        : 'This device has no vibration API, so reminders can only make a sound.';
+    }
+  }
+
+  function fillSettingsForm(notify) {
+    var s = Store.settings();
+    var person = Store.activePerson();
+
+    el.setDailyTarget.value = (s.dailyTargetMinutes / 60).toFixed(2).replace(/\.?0+$/, '');
+    el.setBreakAlert.value = s.breakAlertMinutes;
+    el.setBreakRepeat.value = s.breakRepeatMinutes;
+    el.setLunchAlert.value = s.lunchAlertMinutes;
+    el.setLunchRepeat.value = s.lunchRepeatMinutes;
+    el.setKeepAlive.checked = !!s.keepAliveEnabled;
+    el.setVibrate.checked = !!s.vibrate;
+
+    el.renamePersonInput.value = person.name;
+    el.renamePersonRole.value = person.role || '';
+    el.deletePersonBtn.disabled = Store.persons().length <= 1;
+
+    renderNotifyCard(notify);
+    renderKeepAliveStatus(notify);
+    renderSettingsSummaries(notify);
+  }
+
+  /** Collapsed groups still have to answer "what is this set to?". */
+  function renderSettingsSummaries(notify) {
+    var s = Store.settings();
+    var person = Store.activePerson();
+    var perm = notify.permission();
+
+    if (el.sumReminders) {
+      el.sumReminders.textContent = perm === 'granted'
+        ? 'On · break ' + s.breakAlertMinutes + 'm · lunch ' + s.lunchAlertMinutes + 'm'
+        : (perm === 'denied' ? 'Blocked — needs your attention' : 'Off · tap to turn on');
+    }
+    if (el.sumWorkday) {
+      el.sumWorkday.textContent = compactHours(s.dailyTargetMinutes * 60000) + ' a day';
+    }
+    if (el.sumProfile) {
+      el.sumProfile.textContent = person.name + (person.role ? ' · ' + person.role : '') +
+        ' · ' + Store.persons().length + (Store.persons().length === 1 ? ' profile' : ' profiles');
+    }
+    if (el.sumInstall) {
+      var installed = global.matchMedia && global.matchMedia('(display-mode: standalone)').matches;
+      el.sumInstall.textContent = installed ? 'Installed' : 'Not on your home screen yet';
+    }
+  }
+
+  /* ---------------------------------------------------------------- views */
+
+  function showView(name) {
+    ['timer', 'week', 'calendar'].forEach(function (view) {
+      var node = el['view' + view.charAt(0).toUpperCase() + view.slice(1)];
+      if (!node) return;
+      var isTarget = view === name;
+      node.hidden = !isTarget;
+
+      // Restart the entry animation each time. Removing the class and reading
+      // offsetWidth is the standard way to replay a CSS animation on a node
+      // that already carries it.
+      node.classList.remove('entering');
+      if (isTarget) {
+        void node.offsetWidth;
+        node.classList.add('entering');
+      }
+    });
+    document.querySelectorAll('.bottom-nav .nav-item[data-view]').forEach(function (btn) {
+      var active = btn.getAttribute('data-view') === name;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-current', active ? 'page' : 'false');
+    });
+    window.scrollTo({ top: 0 });
+  }
+
+  /* ---------------------------------------------------------------- modals */
+
+  var FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), ' +
+    'select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+  // Where focus was before the dialog opened, so it can be handed back.
+  var focusReturn = null;
+  var trapHandler = null;
+
+  function visibleFocusable(node) {
+    return Array.prototype.filter.call(node.querySelectorAll(FOCUSABLE), function (n) {
+      return !n.hidden && n.offsetParent !== null;
+    });
+  }
+
+  /**
+   * `aria-modal="true"` is a promise to assistive tech that the rest of the
+   * page is unreachable. Nothing was enforcing it: Tab walked straight out of
+   * the dialog into the timer behind it, and closing left focus on <body>. The
+   * cycle is implemented here rather than with the `inert` attribute because
+   * inert is still missing on the older Android WebViews this app targets.
+   */
+  function openModal(node) {
+    focusReturn = document.activeElement;
+    node.hidden = false;
+    node.classList.add('open');
+    document.body.classList.add('modal-open');
+
+    var focusable = node.querySelector('input, select, button:not(.close-btn)');
+    if (focusable) setTimeout(function () { focusable.focus(); }, 60);
+
+    trapHandler = function (event) {
+      if (event.key !== 'Tab') return;
+      var items = visibleFocusable(node);
+      if (!items.length) return;
+
+      var first = items[0];
+      var last = items[items.length - 1];
+
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      } else if (!node.contains(document.activeElement)) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    node.addEventListener('keydown', trapHandler);
+    document.addEventListener('keydown', trapHandler);
+  }
+
+  function closeModal(node) {
+    node.classList.remove('open');
+    node.hidden = true;
+
+    if (trapHandler) {
+      node.removeEventListener('keydown', trapHandler);
+      document.removeEventListener('keydown', trapHandler);
+      trapHandler = null;
+    }
+
+    // Only release the page scroll once no dialog is left open — the day
+    // details sheet can open the correction sheet on top of itself.
+    if (!document.querySelector('.modal-overlay.open')) {
+      document.body.classList.remove('modal-open');
+    }
+
+    if (focusReturn && focusReturn.focus) {
+      try { focusReturn.focus(); } catch (e) { /* node may be gone */ }
+    }
+    focusReturn = null;
+  }
+
+  function renderDateHeader(now) {
+    var d = new Date(now);
+    el.currentDayName.textContent = d.toLocaleDateString([], { weekday: 'long' });
+    el.currentFullDate.textContent = d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    if (el.brandTargetBadge) el.brandTargetBadge.textContent = compactHours(targetMs()) + ' goal';
+  }
+
+  global.T8UI = {
+    el: el,
+    cache: cache,
+    escapeHtml: escapeHtml,
+    hms: hms,
+    hm: hm,
+    shortDuration: shortDuration,
+    clockTime: clockTime,
+    signedBalance: signedBalance,
+    targetMs: targetMs,
+    startOfWeek: startOfWeek,
+    toast: toast,
+    renderTimer: renderTimer,
+    renderActions: renderActions,
+    renderReminderStatus: renderReminderStatus,
+    renderOpenShiftBanner: renderOpenShiftBanner,
+    renderWeek: renderWeek,
+    renderCalendar: renderCalendar,
+    renderPersonHeader: renderPersonHeader,
+    renderPersonList: renderPersonList,
+    renderDayDetails: renderDayDetails,
+    renderDateHeader: renderDateHeader,
+    fillEditForm: fillEditForm,
+    fillSettingsForm: fillSettingsForm,
+    renderNotifyCard: renderNotifyCard,
+    renderKeepAliveStatus: renderKeepAliveStatus,
+    renderPushStatus: renderPushStatus,
+    renderSettingsSummaries: renderSettingsSummaries,
+    showView: showView,
+    openModal: openModal,
+    closeModal: closeModal
+  };
+})(typeof window !== 'undefined' ? window : globalThis);

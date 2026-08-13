@@ -1,0 +1,5 @@
+node_modules/
+
+# Pending reminders for breaks running right now. Machine state, not source —
+# and it contains push endpoints, which are per-device identifiers.
+data/

@@ -1,0 +1,17 @@
+# Server dependencies. Render runs `npm install` at build time.
+node_modules/
+
+# Pending reminders for breaks running right now. Machine state, and it holds
+# push endpoints, which are per-device identifiers.
+server/data/
+
+# VAPID keys live in the host's environment variables, never in the repo.
+# Publishing the private key would let anyone send notifications to every
+# phone that has ever installed this app.
+.env
+.env.*
+!.env.example
+
+*.log
+.DS_Store
+Thumbs.db

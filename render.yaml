@@ -1,0 +1,33 @@
+# Render blueprint for Track8.
+#
+# One web service that both serves the app and sends its reminders. Same origin
+# on purpose: a push subscription belongs to the origin that registered the
+# service worker, so keeping them together avoids CORS and a second domain.
+#
+# After the first deploy:
+#   1. Run `npm run keys` locally, once.
+#   2. Paste the two values into the service's Environment tab.
+#   3. Point a cron at https://<your-service>.onrender.com/healthz every 10
+#      minutes. Render's free tier idles a service after ~15 minutes without a
+#      request, and an idle service cannot send a reminder on time.
+services:
+  - type: web
+    name: track8
+    runtime: node
+    plan: free
+    region: singapore
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      # Generated once with `npm run keys`. Changing them invalidates every
+      # phone's subscription until each one reopens the app.
+      - key: VAPID_PUBLIC_KEY
+        sync: false
+      - key: VAPID_PRIVATE_KEY
+        sync: false
+      - key: VAPID_SUBJECT
+        sync: false
