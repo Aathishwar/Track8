@@ -156,12 +156,35 @@
    * barely used cannot outrank a newer version of the same day from the device
    * actually in use.
    */
+  // What store.js names the profile it creates on a device that has never been
+  // used. Untouched, it is not a person - it is an empty slot.
+  var DEFAULT_PROFILE_NAME = 'Me';
+
+  /**
+   * A starter profile nobody has used yet.
+   *
+   * Every device mints its own person id, so signing in on a second device
+   * would otherwise upload its empty "Me" as a second person and leave the
+   * account with one profile per device. Uploading is skipped for these, and
+   * applyServerChanges() retires them once the account's real profile arrives.
+   */
+  function isUntouchedDefault(state, person) {
+    if (!person || person.name !== DEFAULT_PROFILE_NAME) return false;
+    if (person.role) return false;
+    var days = state.days[person.id] || {};
+    return Object.keys(days).length === 0;
+  }
+
   function localChanges(since) {
     var state = Store.get();
     var days = [];
     var profiles = [];
 
     state.persons.forEach(function (person) {
+      // Nothing to say about an empty slot. If this turns out to be a brand
+      // new account it stays local, gets named, and is uploaded then.
+      if (isUntouchedDefault(state, person)) return;
+
       var updatedAt = person.updatedAt || person.createdAt || 1;
       if (updatedAt > since) {
         profiles.push({
@@ -273,6 +296,33 @@
       }
     }
 
+    // Retire the empty starter profile once the account's real one has
+    // arrived. Without this, signing in on a new device leaves you looking at
+    // two people - the account's, and the placeholder this device happened to
+    // create before it knew who you were. Removed outright rather than
+    // tombstoned, because it was never uploaded and so does not exist anywhere
+    // else to delete.
+    // Only a placeholder the server has never heard of. A profile genuinely
+    // named "Me" on the account is somebody's actual profile: retiring that
+    // would delete it here and then pull it straight back on the next full
+    // sync, flickering forever.
+    var known = {};
+    (data.profiles || []).forEach(function (p) { known[p.clientId] = true; });
+
+    var retired = state.persons.filter(function (p) {
+      return isUntouchedDefault(state, p) && !known[p.id];
+    });
+    var keep = state.persons.filter(function (p) { return retired.indexOf(p) === -1; });
+
+    if (retired.length && keep.length) {
+      retired.forEach(function (p) { delete state.days[p.id]; });
+      state.persons = keep;
+      if (retired.some(function (p) { return p.id === state.activePersonId; })) {
+        state.activePersonId = keep[0].id;
+      }
+      changed = true;
+    }
+
     // The active profile may have been removed on another device.
     if (!state.persons.some(function (p) { return p.id === state.activePersonId; })) {
       if (state.persons.length) state.activePersonId = state.persons[0].id;
@@ -379,6 +429,12 @@
     run: run,
     schedule: schedule,
     status: status,
-    onChange: onChange
+    onChange: onChange,
+
+    // Exposed for verification, like the other modules: these two are pure
+    // enough to drive directly, which is how the profile-merge rules are
+    // tested against a real server without a browser.
+    localChanges: localChanges,
+    applyServerChanges: applyServerChanges
   };
 })(typeof window !== 'undefined' ? window : globalThis);
