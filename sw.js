@@ -9,7 +9,7 @@
  *      "End break" action are handled here even when no tab is open.
  */
 
-var CACHE = 'track8-shell-v7';
+var CACHE = 'track8-shell-v8';
 
 var SHELL = [
   './',

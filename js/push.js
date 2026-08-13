@@ -48,6 +48,36 @@
     return !!(global.PushManager && global.navigator && navigator.serviceWorker);
   }
 
+  /** Raw bytes back to the base64url form the server deals in. */
+  function uint8ArrayToUrlBase64(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var binary = '';
+    for (var i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    return global.btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+
+  /**
+   * Is this subscription still bound to the key the server is signing with?
+   *
+   * A subscription is tied for life to the VAPID public key it was created
+   * with. Rotate the server's keys and every existing subscription starts
+   * failing with 403 - and because getSubscription() happily keeps returning
+   * the stale one, a phone would never re-subscribe on its own. It would just
+   * go quiet, permanently, with nothing in the UI to say why.
+   *
+   * Browsers that do not expose `options` get the benefit of the doubt: a
+   * needless re-subscribe would lose a working setup, and a 403 is at least
+   * recoverable by reinstalling.
+   */
+  function matchesCurrentKey(sub, key) {
+    if (!sub.options || !sub.options.applicationServerKey) return true;
+    try {
+      return uint8ArrayToUrlBase64(sub.options.applicationServerKey) === key;
+    } catch (e) {
+      return true;
+    }
+  }
+
   /**
    * A static host answers /api/vapid-key with index.html and a cheerful 200,
    * so a 200 is not enough - the body has to be the JSON we asked for.
@@ -93,11 +123,20 @@
         return registration.pushManager.getSubscription();
       })
       .then(function (existing) {
-        if (existing) return existing;
-        return registration.pushManager.subscribe({
-          userVisibleOnly: true,
-          applicationServerKey: urlBase64ToUint8Array(publicKey)
-        });
+        function subscribeFresh() {
+          return registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: urlBase64ToUint8Array(publicKey)
+          });
+        }
+
+        if (!existing) return subscribeFresh();
+        if (matchesCurrentKey(existing, publicKey)) return existing;
+
+        // The server's keys changed under us. Trade the dead subscription for
+        // one the current key can actually push to.
+        console.info('Track8: push key rotated, re-subscribing.');
+        return existing.unsubscribe().then(subscribeFresh, subscribeFresh);
       })
       .then(function (sub) {
         subscription = sub;
