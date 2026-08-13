@@ -1,26 +1,44 @@
 # Track8 — notes for Claude Code
 
 Mobile-first PWA that tracks a daily 8-hour work target, with break/lunch reminders that
-survive the phone's screen being off. Single user, single device, no server.
+survive the phone's screen being off. Email-code accounts sync it across devices; the phone
+stays the working copy and the app never waits on the network.
 
-**Vanilla HTML/CSS/JS. No build step, no bundler, no dependencies, no framework.** Deployed
-by copying the folder to any static host (GitHub Pages). Do not introduce npm, TypeScript,
-a bundler, or a runtime library without being asked — "no build step" is a product
-requirement, not an accident.
+**The client is vanilla HTML/CSS/JS: no build step, no bundler, no dependencies, no
+framework.** Do not introduce npm, TypeScript, a bundler or a runtime library into `js/`
+without being asked — "no build step" is a product requirement, not an accident. The folder
+must stay deployable to a plain static host, where it runs local-only.
+
+**`server/` is exempt and separate.** Ordinary modern Node with dependencies, none of which
+reach the browser.
 
 ## Run it
+
+Static only — tracker, offline, on-device reminders, no accounts:
 
 ```
 python -m http.server 8123      # then http://127.0.0.1:8123/
 ```
+
+Everything, including sync and sign-in:
+
+```
+cd server && npm install && npm start    # http://localhost:3000
+```
+
+Copy `server/.env.example` to `server/.env` first. Leave `BREVO_API_KEY` empty and the
+sign-in code is printed to the server console instead of emailed, which is enough to work on
+the whole flow without sending mail.
 
 Must be served over http(s). Service workers and notifications are disabled on `file://`,
 so double-clicking `index.html` gives you a degraded app with no reminders and no install.
 `127.0.0.1` counts as a secure origin, so localhost is enough.
 
 There is no test runner. Behaviour is verified by driving the real app in a browser and
-asserting against `window.T8Timeline` / `window.T8Store` / `window.T8Report`, which are all
-exposed on `window` for exactly that reason.
+asserting against `window.T8Timeline` / `window.T8Store` / `window.T8Report` / `window.T8Sync`,
+which are all exposed on `window` for exactly that reason. The server is verified the same
+way: drive the real endpoints against a real database, including a deliberately unscoped
+query to prove row-level security is doing something.
 
 ## The one invariant that matters
 
@@ -54,10 +72,17 @@ reintroduces is invisible in testing and total in real use.
 | `js/store.js` | The persisted shape. The only module that touches `localStorage`. Validation, repair, v1→v2 migration. |
 | `js/xlsx.js` | `.xlsx` writer: store-only ZIP + CRC32 + SpreadsheetML. Generic; knows nothing about attendance. |
 | `js/report.js` | Builds the three worksheets from the event logs. |
-| `js/notify.js` | The three reminder layers, keep-alive audio, service-worker notification delivery. |
+| `js/notify.js` | The on-device reminder layers, keep-alive audio, service-worker notification delivery. |
+| `js/push.js` | Subscribes this device to server-sent reminders. Fails soft on every path. |
+| `js/sync.js` | Account state, sign-in, and the background delta sync. Fails soft on every path. |
 | `js/ui.js` | All DOM writing. Nothing else in the codebase writes to the DOM. |
 | `js/app.js` | State machine, tick loop, event handlers. Deliberately thin. |
-| `sw.js` | Offline shell cache + **all** notification posting and notification-action routing. |
+| `sw.js` | Offline shell cache, **all** notification posting, action routing, and the push handler. |
+| `server/db.js` | Schema, pool, and `withAccount()` — where isolation is decided. Read it before touching a query. |
+| `server/auth.js` | Emailed codes, sessions, changing an address. |
+| `server/sync.js` | The one delta-exchange endpoint. |
+| `server/reminders.js` | Pending server-sent reminders and the scheduler. |
+| `server/mail.js` | Brevo HTTP API. Not SMTP — Render blocks those ports. |
 
 Load order in `index.html` matters — each module reads its dependencies off `window` at
 definition time.
@@ -254,6 +279,68 @@ when something is running and disarms when nothing is.
 
 **Free-tier Render idles after ~15 minutes.** An idle service cannot send a reminder on
 time, so the cron ping against `/healthz` is part of the design, not a nicety.
+
+## Accounts and sync
+
+`server/auth.js` signs people in with an emailed six-digit code, `server/sync.js` exchanges
+deltas, `js/sync.js` is the client half. Postgres on Neon, mail via the Brevo HTTP API.
+
+**The account id comes from the session cookie and nowhere else.** Never from a request body,
+a query string, or a client-supplied profile id. `/api/sync` accepts the client's own profile
+ids and resolves them against *this account's* profiles only, so an id belonging to somebody
+else does not resolve rather than resolving to their data. This is the single rule that keeps
+one person's hours away from another's.
+
+**Neon's default role holds BYPASSRLS.** Enabling and forcing row-level security while
+connected as it produces a wall that is not there — verified: an unscoped `select count(*)
+from days` returned every account's rows with the policies present and forced. `withAccount()`
+therefore does `set local role track8_app`, a role created at boot that cannot bypass
+anything. It is transaction-scoped, so it cannot leak across a pooled connection. If you see
+`row-level security NOT enforced` at boot, that second wall is missing and the log says so.
+
+**Creating a role does not make you a member of it,** and `set local role` requires
+membership. Without the grant every sync returns 500 with "permission denied to set role".
+
+**A policy needs `with check`, not just `using`.** `using` governs which existing rows are
+visible to select, update and delete; `with check` governs which rows may be written. A
+policy with only `using` silently forbids every insert, which looks like a broken server
+rather than a security control.
+
+**Two timestamps per day, deliberately.** `updated_at` is the client's clock and decides
+last-write-wins. `synced_at` is server time and is what delta queries use. Merge them and two
+phones with clocks a few minutes apart will skip each other's changes, because "everything
+newer than my last sync" would be measured against a clock that did not write the row.
+
+**Deletions leave tombstones.** Sync compares differences and an absence is not a difference:
+a day that simply vanished would be restored from the server on the next pull, or pushed back
+out to the other devices as though it still existed. `deleteDay` writes an empty event list
+with `deleted: true`, which reads as "no record" everywhere in the app already.
+
+**Anything that changes a day must stamp it.** `Store.touchDay()`, directly or via `putDay`.
+An unstamped change is invisible to sync and never leaves the device.
+
+**The name on the sign-in screen is a label, not a credential.** It is not sent to either
+sign-in endpoint and cannot decide whether a code is accepted. It is applied only when the
+profile has no name yet, and only after the first sync, so a name already set in the app or
+on another device wins — a typo at sign-in must not quietly rename someone everywhere.
+
+**Changing an email sends the code to the new address**, because that is the thing being
+proved; the session proves which account is asking. An address that already has an account is
+refused rather than merged, checked both before sending and again after the code is consumed,
+since it could be claimed during the ten minutes a code is valid.
+
+**The sign-in gate must not appear offline.** Demanding a code that cannot be delivered turns
+the app into a locked door in exactly the situation it exists for. `updateSigninGate()`
+requires `online`, and the gate returns on the next launch with a connection.
+
+**Everything about the server is optional at runtime.** Every path in `js/sync.js` and
+`js/push.js` fails soft. A static host answers `/api/…` with `index.html` and a 200, which is
+why the client insists on a JSON content type before believing it reached a server.
+
+**Sign-in codes are hashed with a bare sha256 over six digits.** A million candidates, so
+anyone with read access to `login_codes` can recover a live code. The short expiry and the
+three-attempt cap are what bound it. If the threat model ever includes database read access,
+this needs a server-side pepper.
 
 ## Known platform limits
 

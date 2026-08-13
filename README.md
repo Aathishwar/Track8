@@ -4,7 +4,9 @@ A daily attendance tracker built around one number: how much of your 8 hours you
 
 Start work, join a meeting, take a break, take lunch, end the day. Meetings count towards your 8 hours; breaks and lunch do not. If you forget to end a break the app chases you until you clock back in.
 
-No accounts, no server, no network. Everything is stored on the device it runs on.
+Sign in with your email and a 6-digit code — no password, no sign-up form. Your hours are then kept both on the device and on your own server, so a new phone or a cleared browser gets them back.
+
+The app itself never waits for the network. Every tap is written locally and returns immediately; syncing happens quietly in the background and is simply skipped when there is nothing to sync to. Offline it behaves exactly as it does online.
 
 ---
 
@@ -35,15 +37,17 @@ Skip this and you still get the pinned notification and a reminder the moment yo
 
 You asked for: start a break, put the phone away, and be told at 15 minutes and every 5 minutes after that if you forget to come back. Lunch the same, starting at 30 minutes.
 
-No web app can guarantee waking a sleeping phone without a push server, so this is delivered in three layers. The weakest one failing never costs you the reminder entirely.
+Nothing running on the phone can be relied on to wake a sleeping phone, so this is delivered in layers. The weakest one failing never costs you the reminder entirely.
 
-**1. Pinned notification — always works.** The moment a break starts, a notification appears and stays in your notification shade for the whole break. It carries an **End break** button, so you can clock back in from the lock screen without opening the app.
+**0. Sent from the server — the reliable one.** When the app is deployed with the push server, your break deadline is held server-side and the reminder is sent to your phone at the right moment. Nothing of the app's has to still be running, so no battery manager can interfere. This is the layer that actually solves the problem; the three below it are what you get without a server.
+
+**1. Pinned notification — always works.** The moment a break starts, a notification appears and stays in your notification shade for the whole break. It states the time you are due back and carries an **End break** button, so you can clock back in from the lock screen without opening the app.
 
 **2. Live nudges — usually works on Android.** At 15 minutes, then every 5, with sound and vibration. This needs the app's timer to survive the screen going off, which Android only allows for pages playing audio — so the app plays a silent track for the length of the break. You can turn this off in Settings if you would rather save the battery. iPhones suspend it regardless.
 
 **3. Catch-up — cannot fail.** Whenever you open the app it works out the true elapsed time from timestamps and tells you immediately: *"You have been on break for 34 minutes."*
 
-If layer 2 turns out to be unreliable on your phone, the fix is a small push server. The service worker already has the `push` handler wired for it, so that is an addition rather than a rewrite.
+The app notices when your phone kills layer 2 and says so, rather than letting a late reminder look like an unreliable app. With layer 0 running, none of that matters and Settings says so.
 
 ---
 
@@ -98,7 +102,7 @@ Colours are consistent everywhere — the status pill, the progress ring, the we
 
 **Profiles** — several people can track on the same device, each with their own history. Add, rename and delete from Settings.
 
-**Settings** — reminder timings, daily target, profile management, Excel export, backup and restore.
+**Settings** — collapsible groups, each header showing its own current values so the common question is answered without opening anything: reminders, daily target, profile, account and sync, data export, install.
 
 ---
 
@@ -116,11 +120,27 @@ Settings › **Backup file** writes a `.json` instead. That is the boring one, a
 
 ---
 
+## Accounts and sync
+
+Signing in is an email address and a 6-digit code. There is no password to forget and no sign-up step — an address becomes an account the first time it proves it can receive a code.
+
+**Your name is a label, never a credential.** It fills in your profile, and only when that profile has no name yet. Typing it differently next time cannot lock you out, and cannot rename what you have set inside the app.
+
+**Already been using the app?** Everything already on the device is uploaded the first time you sign in. Nothing starts fresh.
+
+**Changing your email** — Settings › Account & sync › Change email. The code goes to the *new* address, because that is the thing being proved; your session proves the rest. Every signed-in device stays signed in, and your hours do not move.
+
+**Offline** the app is unchanged. Days are written locally and returned immediately, and sync catches up when you are back. Where two devices edited the same day while both were offline, the newer edit wins and the older one is kept rather than thrown away.
+
+**What is on the server:** your day event logs, profile names and settings. Each account can only ever read its own — enforced both by every query being scoped to the signed-in account and, behind that, by Postgres row-level security, so a query that forgot its filter returns nothing rather than everything.
+
+---
+
 ## Your data
 
-Stored in this browser's local storage under `track8_attendance_app_v2`. It never leaves the device.
+The working copy lives in this browser's local storage under `track8_attendance_app_v2`, and the durable copy lives in your database once you are signed in.
 
-That also means **clearing your browser data deletes it**, and hours logged on your phone will not appear on your laptop. Take a backup now and then.
+Signed out, or deployed without a server, it is local only — which means **clearing your browser data deletes it**, and hours logged on your phone will not appear on your laptop. Take a backup now and then.
 
 Data from the earlier version is migrated automatically the first time you open this one. Those days are marked "imported" because the original only kept totals, not the individual clock-ins, so the timeline shown for them is a reconstruction.
 
@@ -128,27 +148,39 @@ Data from the earlier version is migrated automatically the first time you open 
 
 ## Publishing it
 
-Plain HTML, CSS and JavaScript. No build step, no dependencies, no bundler.
+The app is plain HTML, CSS and JavaScript — no build step, no bundler, no framework. It can be deployed two ways.
+
+### Static host, no server
+
+Copy the folder to GitHub Pages or any static host. You get the tracker, offline support and the on-device reminder layers. You do not get accounts, sync, or server-sent reminders — the app detects their absence and quietly runs local-only.
+
+**HTTPS is required.** Service workers and notifications are disabled on plain HTTP and on `file://` paths, and without HTTPS Android offers only a bookmark shortcut rather than a real install — which is why the icon looks wrong and the app opens in a browser tab with a URL bar.
+
+### With the server — accounts, sync, reliable reminders
+
+`server/` is a small Express app that serves the site *and* runs the sync and push endpoints. Same origin on purpose: a push subscription belongs to the origin that registered the service worker.
+
+`render.yaml` describes the deployment. In short:
+
+1. **Neon** → create a Postgres project, copy the *pooled* connection string.
+2. **Brevo** → verify a sender address, create an API key. The HTTP API, not SMTP: Render blocks outbound ports 25, 465 and 587.
+3. `cd server && npm install && npm run keys` once, for the push key pair.
+4. Set `DATABASE_URL`, `BREVO_API_KEY`, `MAIL_FROM_EMAIL`, `MAIL_FROM_NAME`, `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT` in Render's Environment tab.
+5. **Point a cron at `/healthz` every 10 minutes.** Free-tier Render idles a service after ~15 minutes, and an idle server cannot send a reminder on time.
+
+`/healthz` reports which parts are live: `{"sync":true,"mail":true,"push":true}`.
+
+See `server/README.md` for the detail, including every failure mode and what the app does in each.
+
+### Locally
 
 ```
-git init
-git add .
-git commit -m "Track8 attendance tracker"
-git remote add origin https://github.com/<you>/<repo>.git
-git push -u origin main
+cd server && npm install && npm start     # http://localhost:3000
 ```
 
-Then in the repository: **Settings › Pages › Source: deploy from branch › main / (root)**.
+Copy `server/.env.example` to `server/.env` and fill it in. With `BREVO_API_KEY` left empty the sign-in code is printed to the server console instead of emailed, which is enough to work on the whole flow without sending mail.
 
-It must be served over HTTPS (GitHub Pages is) — service workers and notifications are disabled on plain HTTP and on `file://` paths. Opening `index.html` by double-clicking works for a quick look, but with no install and no reminders.
-
-To try it locally with everything working:
-
-```
-python -m http.server 8123
-```
-
-then open `http://127.0.0.1:8123/` — `127.0.0.1` counts as a secure origin.
+Without the server, `python -m http.server 8123` still works for the static app — `127.0.0.1` counts as a secure origin.
 
 After you publish an update, the app may need one extra refresh to pick it up.
 
@@ -157,18 +189,29 @@ After you publish an update, the app may need one extra refresh to pick it up.
 ## Files
 
 ```
-index.html               markup and modals
+index.html               markup, modals, sign-in screen
 styles.css               design system, mobile-first, safe-area aware
 manifest.webmanifest     home-screen install metadata
-sw.js                    offline cache + all notification delivery
+sw.js                    offline cache, notification delivery, push handler
 icons/                   generated app icons
+render.yaml              deployment blueprint
+
 js/timeline.js           event log to durations. Pure, no DOM, no storage
 js/store.js              persisted shape, validation, v1 migration
 js/xlsx.js               .xlsx writer: store-only ZIP + CRC32 + SpreadsheetML
 js/report.js             the three worksheets, built from the event logs
-js/notify.js             the three reminder layers
+js/notify.js             the on-device reminder layers
+js/push.js               subscribes this device to server-sent reminders
+js/sync.js               account, sign-in, and background sync
 js/ui.js                 all DOM rendering
 js/app.js                state machine, tick loop, event handlers
+
+server/index.js          serves the app, routes the API
+server/db.js             schema, connection pool, per-account transactions
+server/auth.js           emailed codes, sessions, changing your address
+server/sync.js           the one delta-exchange endpoint
+server/reminders.js      pending reminders and the send scheduler
+server/mail.js           Brevo HTTP API
 ```
 
-`js/timeline.js` is the piece worth reading first — everything else depends on it being right.
+`js/timeline.js` is the piece worth reading first — everything else depends on it being right. `server/db.js` is second, because everything about keeping one person's hours away from another's is decided there.
