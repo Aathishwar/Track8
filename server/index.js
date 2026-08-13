@@ -13,6 +13,11 @@
  * falls back to the three on-device reminder layers it has always had, so the
  * folder remains deployable to a plain static host.
  */
+// Local development only. dotenv never overwrites a variable that is already
+// set, so on Render - where the values come from the dashboard and no .env
+// file exists - this is a no-op.
+try { require('dotenv').config(); } catch (e) { /* not installed, not needed */ }
+
 const path = require('path');
 const express = require('express');
 const cookieParser = require('cookie-parser');

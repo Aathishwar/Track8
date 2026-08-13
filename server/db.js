@@ -119,6 +119,35 @@ create table if not exists conflicts (
 );
 `;
 
+// Row-level security is ignored for any role holding BYPASSRLS, and Neon's
+// default owner role holds exactly that - so enabling policies while connected
+// as the owner produces a second wall that is not there. Verified: with the
+// owner, an unscoped `select count(*) from days` returned every account's rows
+// despite the policies being present and forced.
+//
+// The fix needs no extra connection string. A role is created that cannot
+// bypass anything, and each account transaction switches into it. `set local
+// role` is scoped to the transaction, so it cannot leak into the next request
+// that borrows the same pooled connection, and it reverts on commit.
+const APP_ROLE = 'track8_app';
+
+const ROLE_SETUP = [
+  `do $$
+   begin
+     if not exists (select 1 from pg_roles where rolname = '${APP_ROLE}') then
+       create role ${APP_ROLE} nologin nobypassrls;
+     end if;
+   end $$`,
+  `alter role ${APP_ROLE} nobypassrls`,
+  // Creating a role does not make you a member of it, and `set local role`
+  // requires membership. Without this the switch fails with "permission denied
+  // to set role" and every sync returns 500.
+  `do $$ begin execute format('grant %I to %I', '${APP_ROLE}', current_user); end $$`,
+  `grant usage on schema public to ${APP_ROLE}`,
+  `grant select, insert, update, delete on all tables in schema public to ${APP_ROLE}`,
+  `grant usage, select on all sequences in schema public to ${APP_ROLE}`
+];
+
 // Applied separately: these are idempotent but not `if not exists`, so each is
 // allowed to fail without taking the boot down.
 const RLS = [
@@ -128,25 +157,62 @@ const RLS = [
   `alter table days force row level security`,
   `alter table account_settings enable row level security`,
   `alter table account_settings force row level security`,
+  // Both halves are needed. `using` decides which existing rows are visible to
+  // select, update and delete; `with check` decides which rows may be written.
+  // A policy with only `using` silently forbids every insert, because nothing
+  // permits the new row - which looks like a broken server rather than a
+  // security control.
   `drop policy if exists profiles_isolation on profiles`,
   `create policy profiles_isolation on profiles
-     using (account_id = nullif(current_setting('app.account_id', true), '')::bigint)`,
+     using (account_id = nullif(current_setting('app.account_id', true), '')::bigint)
+     with check (account_id = nullif(current_setting('app.account_id', true), '')::bigint)`,
   `drop policy if exists days_isolation on days`,
   `create policy days_isolation on days
      using (profile_id in (
        select id from profiles
+       where account_id = nullif(current_setting('app.account_id', true), '')::bigint))
+     with check (profile_id in (
+       select id from profiles
        where account_id = nullif(current_setting('app.account_id', true), '')::bigint))`,
   `drop policy if exists settings_isolation on account_settings`,
   `create policy settings_isolation on account_settings
-     using (account_id = nullif(current_setting('app.account_id', true), '')::bigint)`
+     using (account_id = nullif(current_setting('app.account_id', true), '')::bigint)
+     with check (account_id = nullif(current_setting('app.account_id', true), '')::bigint)`,
+  // Conflicts are written while acting as the restricted role too.
+  `alter table conflicts enable row level security`,
+  `alter table conflicts force row level security`,
+  `drop policy if exists conflicts_isolation on conflicts`,
+  `create policy conflicts_isolation on conflicts
+     using (profile_id in (
+       select id from profiles
+       where account_id = nullif(current_setting('app.account_id', true), '')::bigint))
+     with check (profile_id in (
+       select id from profiles
+       where account_id = nullif(current_setting('app.account_id', true), '')::bigint))`
 ];
+
+// False when the restricted role could not be created, which means row-level
+// security is not actually enforcing anything. Queries still scope by account
+// themselves, but the second wall is missing and that should be said out loud
+// rather than assumed.
+let roleReady = false;
 
 async function init() {
   if (!configured) {
     console.warn('[db] DATABASE_URL missing - sync disabled, the app still works offline-only.');
     return false;
   }
+
   await pool.query(SCHEMA);
+
+  try {
+    for (const statement of ROLE_SETUP) await pool.query(statement);
+    roleReady = true;
+  } catch (e) {
+    console.error('[db] could not create the restricted role, row-level security will NOT be ' +
+      'enforced. Queries still filter by account. Reason:', e.message);
+  }
+
   for (const statement of RLS) {
     try {
       await pool.query(statement);
@@ -154,8 +220,13 @@ async function init() {
       console.warn('[db] could not apply policy:', e.message);
     }
   }
-  console.log('[db] schema ready');
+
+  console.log('[db] schema ready, row-level security ' + (roleReady ? 'enforced' : 'NOT enforced'));
   return true;
+}
+
+function rlsEnforced() {
+  return roleReady;
 }
 
 /* ---------------------------------------------------------------- queries */
@@ -177,6 +248,9 @@ async function withAccount(accountId, fn) {
   const client = await pool.connect();
   try {
     await client.query('begin');
+    // Drop the owner's BYPASSRLS privilege for the duration of this
+    // transaction, so the policies actually apply to everything below.
+    if (roleReady) await client.query(`set local role ${APP_ROLE}`);
     await client.query('select set_config($1, $2, true)', ['app.account_id', String(accountId)]);
     const result = await fn(client);
     await client.query('commit');
@@ -189,4 +263,9 @@ async function withAccount(accountId, fn) {
   }
 }
 
-module.exports = { init, query, withAccount, pool, configured: () => configured };
+module.exports = {
+  init, query, withAccount, pool,
+  configured: () => configured,
+  rlsEnforced,
+  APP_ROLE
+};

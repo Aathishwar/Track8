@@ -206,7 +206,15 @@ async function verifyCode(req, res) {
       return reject();
     }
     if (!safeEqual(sha256(code), record.code_hash)) {
-      await db.query('update login_codes set attempts = attempts + 1 where email = $1', [email]);
+      // Delete on the failure that reaches the limit, not on the one after it.
+      // Leaving a spent row behind also kept the resend cooldown alive, so a
+      // user who fat-fingered the code three times then had to wait a minute
+      // before they could ask for another.
+      if (record.attempts + 1 >= MAX_ATTEMPTS) {
+        await db.query('delete from login_codes where email = $1', [email]);
+      } else {
+        await db.query('update login_codes set attempts = attempts + 1 where email = $1', [email]);
+      }
       return reject();
     }
 

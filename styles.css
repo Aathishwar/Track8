@@ -1491,7 +1491,9 @@ body.modal-open {
 
 input[type="text"],
 input[type="time"],
-input[type="number"] {
+input[type="number"],
+input[type="email"],
+input[type="tel"] {
   width: 100%;
   min-height: 44px;
   padding: 0 12px;
