@@ -661,8 +661,31 @@
                 <p class="setting-block-note" id="syncStatusText"></p>
                 <div class="inline-actions">
                   <button type="button" class="btn btn-secondary btn-small" id="syncNowBtn">Sync now</button>
+                  <button type="button" class="btn btn-secondary btn-small" id="changeEmailBtn">Change email</button>
                   <button type="button" class="btn btn-danger btn-small" id="signOutBtn">Sign out</button>
                 </div>
+
+                <!-- Changing the address needs a code sent to the new one, so
+                     the same two-step shape as signing in. -->
+                <div id="emailChangePanel" hidden>
+                  <div class="form-group">
+                    <label for="newEmailInput">New email</label>
+                    <input type="email" id="newEmailInput" inputmode="email" autocomplete="email"
+                           placeholder="new@example.com">
+                  </div>
+                  <div class="form-group" id="newEmailCodeGroup" hidden>
+                    <label for="newEmailCode">Code sent to the new address</label>
+                    <input type="text" id="newEmailCode" inputmode="numeric" pattern="[0-9]*"
+                           maxlength="6" placeholder="000000">
+                  </div>
+                  <div class="inline-actions">
+                    <button type="button" class="btn btn-primary btn-small" id="sendNewEmailCodeBtn">Send code</button>
+                    <button type="button" class="btn btn-primary btn-small" id="confirmNewEmailBtn" hidden>Confirm change</button>
+                    <button type="button" class="btn btn-ghost btn-small" id="cancelEmailChangeBtn">Cancel</button>
+                  </div>
+                  <p class="setting-block-note" id="emailChangeNote">Your hours stay exactly where they are. Every signed-in device stays signed in.</p>
+                </div>
+
                 <p class="setting-block-note">Your hours are stored against your email so a new phone or a cleared browser gets them back. Signing out leaves everything on this device and stops syncing.</p>
               </div>
             </div>
@@ -752,7 +775,7 @@
           <div class="form-group">
             <label for="signinName">Your name</label>
             <input type="text" id="signinName" autocomplete="name" autocapitalize="words"
-                   placeholder="Aathishwar" maxlength="40">
+                   placeholder="Alex" maxlength="40">
           </div>
 
           <div class="form-group">

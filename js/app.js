@@ -721,6 +721,66 @@
       });
   }
 
+  /* ------------------------------------------------------- change email */
+
+  var pendingNewEmail = '';
+
+  function resetEmailChange() {
+    pendingNewEmail = '';
+    el.newEmailInput.value = '';
+    el.newEmailCode.value = '';
+    el.newEmailCodeGroup.hidden = true;
+    el.newEmailInput.disabled = false;
+    el.confirmNewEmailBtn.hidden = true;
+    el.sendNewEmailCodeBtn.hidden = false;
+    el.emailChangeNote.textContent =
+      'Your hours stay exactly where they are. Every signed-in device stays signed in.';
+  }
+
+  function sendNewEmailCode() {
+    var email = el.newEmailInput.value.trim();
+    if (!email) return;
+
+    el.sendNewEmailCodeBtn.disabled = true;
+    Sync.requestEmailChange(email)
+      .then(function () {
+        pendingNewEmail = email;
+        // Locked while a code is outstanding: the code was sent to this
+        // address, and confirming against a different one would just fail.
+        el.newEmailInput.disabled = true;
+        el.newEmailCodeGroup.hidden = false;
+        el.sendNewEmailCodeBtn.hidden = true;
+        el.confirmNewEmailBtn.hidden = false;
+        el.emailChangeNote.textContent = 'We sent a code to ' + email + '. Enter it to confirm.';
+        el.newEmailCode.focus();
+      })
+      .catch(function (e) {
+        el.emailChangeNote.textContent = e.message || 'Could not send a code to that address.';
+      })
+      .then(function () { el.sendNewEmailCodeBtn.disabled = false; });
+  }
+
+  function confirmNewEmail() {
+    var code = el.newEmailCode.value.trim();
+    if (!/^\d{6}$/.test(code)) {
+      el.emailChangeNote.textContent = 'Enter the 6-digit code.';
+      return;
+    }
+
+    el.confirmNewEmailBtn.disabled = true;
+    Sync.confirmEmailChange(pendingNewEmail, code)
+      .then(function (data) {
+        el.emailChangePanel.hidden = true;
+        resetEmailChange();
+        UI.fillSettingsForm(Notify);
+        UI.toast('Your email is now ' + data.email + '.', 'ok');
+      })
+      .catch(function (e) {
+        el.emailChangeNote.textContent = e.message || 'That code did not work.';
+      })
+      .then(function () { el.confirmNewEmailBtn.disabled = false; });
+  }
+
   /* --------------------------------------------------------- notifications */
 
   function enableNotifications() {
@@ -1004,6 +1064,21 @@
         UI.toast(s.lastSyncOk ? 'Synced.' : 'Sync failed: ' + s.error, s.lastSyncOk ? 'ok' : 'warn');
         UI.fillSettingsForm(Notify);
       });
+    });
+
+    el.changeEmailBtn.addEventListener('click', function () {
+      var opening = el.emailChangePanel.hidden;
+      el.emailChangePanel.hidden = !opening;
+      if (opening) {
+        resetEmailChange();
+        el.newEmailInput.focus();
+      }
+    });
+    el.sendNewEmailCodeBtn.addEventListener('click', sendNewEmailCode);
+    el.confirmNewEmailBtn.addEventListener('click', confirmNewEmail);
+    el.cancelEmailChangeBtn.addEventListener('click', function () {
+      el.emailChangePanel.hidden = true;
+      resetEmailChange();
     });
 
     el.exportExcelBtn.addEventListener('click', exportExcel);

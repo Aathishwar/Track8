@@ -104,6 +104,11 @@ app.post('/api/auth/verify', auth.verifyCode);
 app.get('/api/auth/me', auth.me);
 app.post('/api/auth/logout', auth.logout);
 
+// Changing the address needs both proofs, so the session is required here and
+// the code goes to the destination.
+app.post('/api/account/email/request', auth.requireAccount, auth.requestEmailChange);
+app.post('/api/account/email/confirm', auth.requireAccount, auth.confirmEmailChange);
+
 // The only route that touches attendance data, and the only one that needs an
 // account. requireAccount runs first, so an expired or missing session can
 // never reach a query.

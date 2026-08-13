@@ -116,6 +116,26 @@
     });
   }
 
+  /* ---------------------------------------------------------- change email */
+
+  function requestEmailChange(email) {
+    return api('./api/account/email/request', {
+      method: 'POST',
+      body: JSON.stringify({ email: email })
+    });
+  }
+
+  function confirmEmailChange(email, code) {
+    return api('./api/account/email/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ email: email, code: code })
+    }).then(function (data) {
+      account = { email: data.email };
+      notify();
+      return data;
+    });
+  }
+
   function signOut() {
     return api('./api/auth/logout', { method: 'POST' })
       .catch(function () { /* clearing locally is what matters */ })
@@ -353,6 +373,8 @@
     refresh: refresh,
     requestCode: requestCode,
     verifyCode: verifyCode,
+    requestEmailChange: requestEmailChange,
+    confirmEmailChange: confirmEmailChange,
     signOut: signOut,
     run: run,
     schedule: schedule,

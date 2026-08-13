@@ -121,60 +121,103 @@ function requireAccount(req, res, next) {
 
 /* ----------------------------------------------------------------- routes */
 
+/**
+ * Issue and send a code for an address, with the rate limits applied.
+ *
+ * Shared by signing in and by changing an account's email. Both are the same
+ * question - can you receive mail at this address - so they use the same
+ * machinery. Returns a status and message for the caller to send on, rather
+ * than writing the response itself.
+ */
+async function issueCode(req, email) {
+  if (!ipAllowed(clientIp(req))) {
+    return { status: 429, body: { error: 'too many requests, try again later' } };
+  }
+
+  const { rows } = await db.query('select * from login_codes where email = $1', [email]);
+  const existing = rows[0];
+
+  if (existing) {
+    const sinceSent = Date.now() - new Date(existing.sent_at).getTime();
+    if (sinceSent < RESEND_COOLDOWN_MS) {
+      return {
+        status: 429,
+        body: {
+          error: 'a code was just sent, check your inbox',
+          retryInSeconds: Math.ceil((RESEND_COOLDOWN_MS - sinceSent) / 1000)
+        }
+      };
+    }
+    if (sinceSent < 60 * 60 * 1000 && existing.sent_count >= MAX_SENDS_PER_HOUR) {
+      return { status: 429, body: { error: 'too many codes requested, try again in an hour' } };
+    }
+  }
+
+  const code = newCode();
+  const expiresAt = new Date(Date.now() + CODE_TTL_MS);
+  const resetCount = !existing || Date.now() - new Date(existing.sent_at).getTime() >= 60 * 60 * 1000;
+
+  await db.query(
+    `insert into login_codes (email, code_hash, expires_at, attempts, sent_at, sent_count)
+     values ($1, $2, $3, 0, now(), 1)
+     on conflict (email) do update
+        set code_hash = excluded.code_hash,
+            expires_at = excluded.expires_at,
+            attempts = 0,
+            sent_at = now(),
+            sent_count = case when $4 then 1 else login_codes.sent_count + 1 end`,
+    [email, sha256(code), expiresAt, resetCount]
+  );
+
+  const sent = await mail.sendLoginCode(email, code);
+  if (!sent.ok) {
+    return { status: 502, body: { error: 'could not send the email, try again in a moment' } };
+  }
+
+  return { status: 200, body: { ok: true, expiresInSeconds: CODE_TTL_MS / 1000 } };
+}
+
+/**
+ * Check a code for an address and consume it.
+ *
+ * Every rejection reads the same, so nothing can be learned by probing which
+ * of "never asked", "expired", "used up" or "wrong" applies.
+ */
+async function consumeCode(email, code) {
+  const { rows } = await db.query('select * from login_codes where email = $1', [email]);
+  const record = rows[0];
+  if (!record) return false;
+
+  if (new Date(record.expires_at).getTime() < Date.now() || record.attempts >= MAX_ATTEMPTS) {
+    await db.query('delete from login_codes where email = $1', [email]);
+    return false;
+  }
+
+  if (!safeEqual(sha256(code), record.code_hash)) {
+    if (record.attempts + 1 >= MAX_ATTEMPTS) {
+      await db.query('delete from login_codes where email = $1', [email]);
+    } else {
+      await db.query('update login_codes set attempts = attempts + 1 where email = $1', [email]);
+    }
+    return false;
+  }
+
+  await db.query('delete from login_codes where email = $1', [email]);
+  return true;
+}
+
 async function requestCode(req, res) {
   if (!db.configured()) return res.status(503).json({ error: 'sync not configured' });
 
   const email = normaliseEmail((req.body || {}).email);
   if (!validEmail(email)) return res.status(400).json({ error: 'enter a valid email address' });
 
-  if (!ipAllowed(clientIp(req))) {
-    return res.status(429).json({ error: 'too many requests, try again later' });
-  }
-
   try {
-    const { rows } = await db.query('select * from login_codes where email = $1', [email]);
-    const existing = rows[0];
-
-    if (existing) {
-      const sinceSent = Date.now() - new Date(existing.sent_at).getTime();
-      if (sinceSent < RESEND_COOLDOWN_MS) {
-        return res.status(429).json({
-          error: 'a code was just sent, check your inbox',
-          retryInSeconds: Math.ceil((RESEND_COOLDOWN_MS - sinceSent) / 1000)
-        });
-      }
-      // The hourly count only resets once the window has fully passed, so a
-      // steady trickle cannot creep past the cap.
-      if (sinceSent < 60 * 60 * 1000 && existing.sent_count >= MAX_SENDS_PER_HOUR) {
-        return res.status(429).json({ error: 'too many codes requested, try again in an hour' });
-      }
-    }
-
-    const code = newCode();
-    const expiresAt = new Date(Date.now() + CODE_TTL_MS);
-    const resetCount = !existing || Date.now() - new Date(existing.sent_at).getTime() >= 60 * 60 * 1000;
-
-    await db.query(
-      `insert into login_codes (email, code_hash, expires_at, attempts, sent_at, sent_count)
-       values ($1, $2, $3, 0, now(), 1)
-       on conflict (email) do update
-          set code_hash = excluded.code_hash,
-              expires_at = excluded.expires_at,
-              attempts = 0,
-              sent_at = now(),
-              sent_count = case when $4 then 1 else login_codes.sent_count + 1 end`,
-      [email, sha256(code), expiresAt, resetCount]
-    );
-
-    const sent = await mail.sendLoginCode(email, code);
-    if (!sent.ok) {
-      return res.status(502).json({ error: 'could not send the email, try again in a moment' });
-    }
-
-    res.json({ ok: true, expiresInSeconds: CODE_TTL_MS / 1000 });
+    const result = await issueCode(req, email);
+    return res.status(result.status).json(result.body);
   } catch (e) {
     console.error('[auth] requestCode failed:', e.message);
-    res.status(500).json({ error: 'something went wrong, try again' });
+    return res.status(500).json({ error: 'something went wrong, try again' });
   }
 }
 
@@ -189,36 +232,8 @@ async function verifyCode(req, res) {
   }
 
   try {
-    const { rows } = await db.query('select * from login_codes where email = $1', [email]);
-    const record = rows[0];
-
-    // Identical response for "never asked", "expired" and "wrong", so nothing
-    // can be learned by probing.
-    const reject = () => res.status(400).json({ error: 'that code is wrong or has expired' });
-
-    if (!record) return reject();
-    if (new Date(record.expires_at).getTime() < Date.now()) {
-      await db.query('delete from login_codes where email = $1', [email]);
-      return reject();
-    }
-    if (record.attempts >= MAX_ATTEMPTS) {
-      await db.query('delete from login_codes where email = $1', [email]);
-      return reject();
-    }
-    if (!safeEqual(sha256(code), record.code_hash)) {
-      // Delete on the failure that reaches the limit, not on the one after it.
-      // Leaving a spent row behind also kept the resend cooldown alive, so a
-      // user who fat-fingered the code three times then had to wait a minute
-      // before they could ask for another.
-      if (record.attempts + 1 >= MAX_ATTEMPTS) {
-        await db.query('delete from login_codes where email = $1', [email]);
-      } else {
-        await db.query('update login_codes set attempts = attempts + 1 where email = $1', [email]);
-      }
-      return reject();
-    }
-
-    await db.query('delete from login_codes where email = $1', [email]);
+    const accepted = await consumeCode(email, code);
+    if (!accepted) return res.status(400).json({ error: 'that code is wrong or has expired' });
 
     // First correct code for an address creates the account. There is no
     // separate signup to get wrong.
@@ -252,6 +267,77 @@ async function verifyCode(req, res) {
   }
 }
 
+/* ---------------------------------------------------------- change email */
+
+/**
+ * Send a code to the address the user wants to move to.
+ *
+ * Two proofs are required to complete the change, and they are checked in
+ * different places: the session cookie proves which account is asking, and the
+ * code proves control of the destination address. Neither alone is enough,
+ * which is why the code goes to the new address rather than the current one.
+ */
+async function requestEmailChange(req, res) {
+  if (!db.configured()) return res.status(503).json({ error: 'sync not configured' });
+
+  const email = normaliseEmail((req.body || {}).email);
+  if (!validEmail(email)) return res.status(400).json({ error: 'enter a valid email address' });
+  if (email === normaliseEmail(req.account.email)) {
+    return res.status(400).json({ error: 'that is already your email' });
+  }
+
+  try {
+    // Refused rather than merged. Two accounts cannot share an address, and
+    // silently folding one into the other would be a data loss nobody asked
+    // for.
+    const taken = await db.query('select 1 from accounts where email = $1', [email]);
+    if (taken.rows.length) {
+      return res.status(409).json({ error: 'that email already has a Track8 account' });
+    }
+
+    const result = await issueCode(req, email);
+    return res.status(result.status).json(result.body);
+  } catch (e) {
+    console.error('[auth] requestEmailChange failed:', e.message);
+    return res.status(500).json({ error: 'something went wrong, try again' });
+  }
+}
+
+async function confirmEmailChange(req, res) {
+  if (!db.configured()) return res.status(503).json({ error: 'sync not configured' });
+
+  const email = normaliseEmail((req.body || {}).email);
+  const code = String((req.body || {}).code || '').trim();
+
+  if (!validEmail(email) || !/^\d{6}$/.test(code)) {
+    return res.status(400).json({ error: 'enter the 6-digit code' });
+  }
+  if (email === normaliseEmail(req.account.email)) {
+    return res.status(400).json({ error: 'that is already your email' });
+  }
+
+  try {
+    const accepted = await consumeCode(email, code);
+    if (!accepted) return res.status(400).json({ error: 'that code is wrong or has expired' });
+
+    // Re-checked after the code was consumed: the address could have been
+    // claimed in the ten minutes the code was valid for.
+    const taken = await db.query('select 1 from accounts where email = $1', [email]);
+    if (taken.rows.length) {
+      return res.status(409).json({ error: 'that email already has a Track8 account' });
+    }
+
+    await db.query('update accounts set email = $1 where id = $2', [email, req.account.id]);
+
+    // Sessions are keyed to the account, not the address, so every signed-in
+    // device stays signed in - nothing about who they are has changed.
+    res.json({ ok: true, email });
+  } catch (e) {
+    console.error('[auth] confirmEmailChange failed:', e.message);
+    res.status(500).json({ error: 'something went wrong, try again' });
+  }
+}
+
 async function me(req, res) {
   res.json({
     signedIn: Boolean(req.account),
@@ -275,6 +361,8 @@ module.exports = {
   requireAccount,
   requestCode,
   verifyCode,
+  requestEmailChange,
+  confirmEmailChange,
   me,
   logout,
   COOKIE

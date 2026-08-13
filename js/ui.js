@@ -159,7 +159,9 @@
       'signinScreen', 'signinEmailForm', 'signinCodeForm', 'signinEmail', 'signinCode', 'signinName',
       'signinSendBtn', 'signinVerifyBtn', 'signinResendBtn', 'signinBackBtn',
       'signinSentTo', 'signinError',
-      'syncStatusText', 'syncNowBtn', 'signOutBtn',
+      'syncStatusText', 'syncNowBtn', 'signOutBtn', 'changeEmailBtn',
+      'emailChangePanel', 'newEmailInput', 'newEmailCode', 'newEmailCodeGroup',
+      'sendNewEmailCodeBtn', 'confirmNewEmailBtn', 'cancelEmailChangeBtn', 'emailChangeNote',
       'renamePersonInput', 'renamePersonRole', 'savePersonBtn', 'deletePersonBtn',
       'exportExcelBtn', 'exportBtn', 'importBtn', 'importFileInput', 'installBtn', 'installHint',
       'progressRingContainer', 'toastHost'
@@ -969,6 +971,10 @@
 
     if (el.signOutBtn) el.signOutBtn.hidden = !s.signedIn;
     if (el.syncNowBtn) el.syncNowBtn.hidden = !s.signedIn;
+    if (el.changeEmailBtn) el.changeEmailBtn.hidden = !s.signedIn;
+    // Closing the panel whenever the account state changes stops a half-filled
+    // email change surviving a sign-out.
+    if (el.emailChangePanel && !s.signedIn) el.emailChangePanel.hidden = true;
   }
 
   /* ---------------------------------------------------------------- views */
