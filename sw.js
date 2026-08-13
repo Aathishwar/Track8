@@ -9,7 +9,7 @@
  *      "End break" action are handled here even when no tab is open.
  */
 
-var CACHE = 'track8-shell-v8';
+var CACHE = 'track8-shell-v9';
 
 var SHELL = [
   './',
@@ -22,6 +22,7 @@ var SHELL = [
   './js/report.js',
   './js/notify.js',
   './js/push.js',
+  './js/sync.js',
   './js/ui.js',
   './js/app.js',
   './icons/icon-192.png',

@@ -12,6 +12,7 @@
   var Store = global.T8Store;
   var Notify = global.T8Notify;
   var Push = global.T8Push;
+  var Sync = global.T8Sync;
   var UI = global.T8UI;
   var Report = global.T8Report;
   var S = TL.STATES;
@@ -60,7 +61,11 @@
     var previous = TL.currentState(day);
     if (!TL.pushEvent(day, nextState, when)) return false;
 
+    // Stamp before saving: an unstamped change is invisible to sync and would
+    // never leave this device.
+    Store.touchDay(day);
     Store.save();
+    Sync.schedule('transition');
 
     var wasResting = previous === S.BREAK || previous === S.LUNCH;
     var isResting = nextState === S.BREAK || nextState === S.LUNCH;
@@ -572,6 +577,94 @@
     event.target.value = '';
   }
 
+  /* ------------------------------------------------------------- sign in */
+
+  var signinEmail = '';
+
+  function showSigninError(message) {
+    el.signinError.textContent = message;
+    el.signinError.hidden = !message;
+  }
+
+  function showSigninStep(step) {
+    el.signinEmailForm.hidden = step !== 'email';
+    el.signinCodeForm.hidden = step !== 'code';
+    showSigninError('');
+    var focus = step === 'email' ? el.signinEmail : el.signinCode;
+    setTimeout(function () { if (focus) focus.focus(); }, 80);
+  }
+
+  /**
+   * Decide whether the gate stands in the way.
+   *
+   * Only when a sync server is actually reachable, nobody is signed in, and
+   * the phone is online. Offline, the app opens straight to the timer and the
+   * gate appears the next time it is launched with a connection - a code that
+   * cannot be delivered is not a login, it is a locked door.
+   */
+  function updateSigninGate() {
+    var s = Sync.status();
+    var show = s.checked && s.available && !s.signedIn && s.online;
+    el.signinScreen.hidden = !show;
+    if (show && el.signinCodeForm.hidden && el.signinEmailForm.hidden) showSigninStep('email');
+  }
+
+  function sendSigninCode(event) {
+    if (event) event.preventDefault();
+    var email = el.signinEmail.value.trim();
+    if (!email) return;
+
+    el.signinSendBtn.disabled = true;
+    el.signinSendBtn.textContent = 'Sending…';
+    showSigninError('');
+
+    Sync.requestCode(email)
+      .then(function () {
+        signinEmail = email;
+        el.signinSentTo.textContent = email;
+        el.signinCode.value = '';
+        showSigninStep('code');
+      })
+      .catch(function (e) {
+        showSigninError(e.message || 'Could not send the code. Try again.');
+      })
+      .then(function () {
+        el.signinSendBtn.disabled = false;
+        el.signinSendBtn.textContent = 'Send me a code';
+      });
+  }
+
+  function verifySigninCode(event) {
+    if (event) event.preventDefault();
+    var code = el.signinCode.value.trim();
+    if (!/^\d{6}$/.test(code)) {
+      showSigninError('Enter the 6-digit code from the email.');
+      return;
+    }
+
+    el.signinVerifyBtn.disabled = true;
+    el.signinVerifyBtn.textContent = 'Signing in…';
+
+    Sync.verifyCode(signinEmail, code)
+      .then(function () {
+        el.signinScreen.hidden = true;
+        UI.toast('Signed in. Your hours are being saved.', 'ok');
+        // Uploads everything already on this device, then pulls anything the
+        // account already had.
+        return Sync.run('after-signin');
+      })
+      .then(function () {
+        renderAll();
+      })
+      .catch(function (e) {
+        showSigninError(e.message || 'That did not work. Try again.');
+      })
+      .then(function () {
+        el.signinVerifyBtn.disabled = false;
+        el.signinVerifyBtn.textContent = 'Sign in';
+      });
+  }
+
   /* --------------------------------------------------------- notifications */
 
   function enableNotifications() {
@@ -848,6 +941,15 @@
     el.savePersonBtn.addEventListener('click', savePersonEdit);
     el.deletePersonBtn.addEventListener('click', deleteCurrentPerson);
 
+    el.syncNowBtn.addEventListener('click', function () {
+      UI.toast('Syncing…', 'info');
+      Sync.run('manual').then(function () {
+        var s = Sync.status();
+        UI.toast(s.lastSyncOk ? 'Synced.' : 'Sync failed: ' + s.error, s.lastSyncOk ? 'ok' : 'warn');
+        UI.fillSettingsForm(Notify);
+      });
+    });
+
     el.exportExcelBtn.addEventListener('click', exportExcel);
     el.exportBtn.addEventListener('click', exportData);
     el.importBtn.addEventListener('click', function () { el.importFileInput.click(); });
@@ -876,6 +978,22 @@
       if (event.key !== 'Escape') return;
       document.querySelectorAll('.modal-overlay.open').forEach(function (m) { UI.closeModal(m); });
       el.personDropdown.hidden = true;
+    });
+
+    // Sign in
+    el.signinEmailForm.addEventListener('submit', sendSigninCode);
+    el.signinCodeForm.addEventListener('submit', verifySigninCode);
+    el.signinResendBtn.addEventListener('click', function () {
+      el.signinEmail.value = signinEmail;
+      sendSigninCode();
+    });
+    el.signinBackBtn.addEventListener('click', function () { showSigninStep('email'); });
+    el.signOutBtn.addEventListener('click', function () {
+      if (!global.confirm('Sign out? Your hours stay on this device, and stop syncing.')) return;
+      Sync.signOut().then(function () {
+        UI.fillSettingsForm(Notify);
+        updateSigninGate();
+      });
     });
 
     // Visibility and wake
@@ -936,6 +1054,15 @@
 
     watchPermission();
 
+    // Sync tells us whether a server is even there. Until it answers, the gate
+    // stays hidden - flashing a sign-in screen at someone on a static host
+    // would be a lie.
+    Sync.onChange(function () {
+      updateSigninGate();
+      if (!el.settingsModal.hidden) UI.fillSettingsForm(Notify);
+    });
+    Sync.init();
+
     Notify.init({ onResumeRequest: actResume }).then(function (registration) {
       UI.renderReminderStatus(Notify);
       consumeLaunchAction();
@@ -952,6 +1079,15 @@
 
     startTicking();
   }
+
+  // Sync applies changes straight into the store, so the screen has to be told
+  // that the day it is drawing may have been rewritten by another device.
+  global.T8App = {
+    onSyncApplied: function () {
+      renderAll();
+      rearmRestingNotifications();
+    }
+  };
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

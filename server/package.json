@@ -12,7 +12,9 @@
     "node": ">=18"
   },
   "dependencies": {
+    "cookie-parser": "^1.4.7",
     "express": "^4.19.2",
+    "pg": "^8.23.0",
     "web-push": "^3.6.7"
   }
 }

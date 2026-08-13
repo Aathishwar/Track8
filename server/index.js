@@ -15,9 +15,14 @@
  */
 const path = require('path');
 const express = require('express');
+const cookieParser = require('cookie-parser');
 const webpush = require('web-push');
 
 const reminders = require('./reminders');
+const db = require('./db');
+const auth = require('./auth');
+const mail = require('./mail');
+const sync = require('./sync');
 
 const PORT = process.env.PORT || 3000;
 const APP_DIR = path.resolve(__dirname, '..');
@@ -38,7 +43,17 @@ if (pushConfigured) {
 }
 
 const app = express();
-app.use(express.json({ limit: '16kb' }));
+
+// Render terminates TLS in front of the app, so req.secure and the client IP
+// both come from the proxy headers. Without this the session cookie would not
+// be marked Secure and the rate limiter would see one address for everyone.
+app.set('trust proxy', 1);
+
+// Generous enough for a first sync carrying a year of days, which is a few
+// hundred kilobytes of event logs.
+app.use(express.json({ limit: '4mb' }));
+app.use(cookieParser());
+app.use(auth.attachAccount);
 
 /* -------------------------------------------------------------- static app */
 
@@ -68,8 +83,26 @@ app.use(express.static(APP_DIR, {
 
 /** Ping target for the cron job that stops Render idling the instance. */
 app.get('/healthz', (req, res) => {
-  res.json({ ok: true, push: pushConfigured, pending: reminders.size() });
+  res.json({
+    ok: true,
+    push: pushConfigured,
+    pending: reminders.size(),
+    sync: db.configured(),
+    mail: mail.configured()
+  });
 });
+
+/* ------------------------------------------------------------------- auth */
+
+app.post('/api/auth/request-code', auth.requestCode);
+app.post('/api/auth/verify', auth.verifyCode);
+app.get('/api/auth/me', auth.me);
+app.post('/api/auth/logout', auth.logout);
+
+// The only route that touches attendance data, and the only one that needs an
+// account. requireAccount runs first, so an expired or missing session can
+// never reach a query.
+app.post('/api/sync', auth.requireAccount, sync.handleSync);
 
 app.get('/api/vapid-key', (req, res) => {
   if (!pushConfigured) return res.status(503).json({ error: 'push not configured' });
@@ -158,6 +191,16 @@ app.get('*', (req, res) => res.sendFile(path.join(APP_DIR, 'index.html')));
 reminders.load();
 reminders.startScheduler();
 
-app.listen(PORT, () => {
-  console.log(`[track8] listening on ${PORT}, push ${pushConfigured ? 'enabled' : 'disabled'}`);
-});
+// The schema is created on boot rather than by a migration tool: it is a
+// handful of `if not exists` statements, and a deploy that cannot reach the
+// database should still serve the app rather than refuse to start.
+db.init()
+  .catch((e) => console.error('[db] init failed, sync disabled:', e.message))
+  .finally(() => {
+    app.listen(PORT, () => {
+      console.log(`[track8] listening on ${PORT}` +
+        `, push ${pushConfigured ? 'on' : 'off'}` +
+        `, sync ${db.configured() ? 'on' : 'off'}` +
+        `, mail ${mail.configured() ? 'on' : 'off'}`);
+    });
+  });

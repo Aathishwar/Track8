@@ -202,7 +202,9 @@
   }
 
   function updateSettings(patch) {
-    Object.assign(get().settings, patch);
+    var s = get();
+    Object.assign(s.settings, patch);
+    s.settingsUpdatedAt = Date.now();
     save();
   }
 
@@ -225,7 +227,10 @@
 
   function addPerson(name, role) {
     var s = get();
-    var person = { id: newPersonId(), name: name, role: role || '', createdAt: Date.now() };
+    var person = {
+      id: newPersonId(), name: name, role: role || '',
+      createdAt: Date.now(), updatedAt: Date.now()
+    };
     s.persons.push(person);
     s.days[person.id] = {};
     s.activePersonId = person.id;
@@ -238,6 +243,7 @@
     if (!person) return false;
     person.name = name;
     if (role != null) person.role = role;
+    person.updatedAt = Date.now();
     save();
     return true;
   }
@@ -247,9 +253,21 @@
     var s = get();
     if (s.persons.length <= 1) return false;
 
+    var person = s.persons.find(function (p) { return p.id === id; });
+
     s.persons = s.persons.filter(function (p) { return p.id !== id; });
     delete s.days[id];
     if (s.activePersonId === id) s.activePersonId = s.persons[0].id;
+
+    // Same reasoning as a deleted day: sync compares differences, and a person
+    // who merely disappeared would come back on the next pull.
+    if (!s.deletedPersons) s.deletedPersons = {};
+    s.deletedPersons[id] = {
+      name: (person && person.name) || 'Removed',
+      role: (person && person.role) || '',
+      updatedAt: Date.now()
+    };
+
     save();
     return true;
   }
@@ -271,14 +289,42 @@
     return days[dateKey];
   }
 
-  function putDay(day, personId) {
+  /**
+   * Stamp a day as changed.
+   *
+   * Sync decides which of two versions of a day wins by comparing these, so
+   * anything that mutates a day has to call it - directly, or through putDay.
+   * A day that changes without being stamped simply never leaves the device.
+   */
+  function touchDay(day) {
+    if (day) day.updatedAt = Date.now();
+    return day;
+  }
+
+  function putDay(day, personId, keepTimestamp) {
+    if (!keepTimestamp) touchDay(day);
     daysOf(personId)[day.dateKey] = day;
     save();
     return day;
   }
 
+  /**
+   * Deleting keeps a tombstone rather than removing the key.
+   *
+   * Sync works on differences, and an absence is not a difference: a deleted
+   * day that simply vanished would be restored from the server on the next
+   * sync, or worse, pushed back to the other devices as though it still
+   * existed. An empty event list reads as "no record" everywhere in the app,
+   * so nothing else needs to know.
+   */
   function deleteDay(dateKey, personId) {
-    delete daysOf(personId)[dateKey];
+    daysOf(personId)[dateKey] = {
+      dateKey: dateKey,
+      events: [],
+      note: '',
+      deleted: true,
+      updatedAt: Date.now()
+    };
     save();
   }
 
@@ -334,6 +380,7 @@
     load: load,
     save: save,
     get: get,
+    touchDay: touchDay,
     settings: settings,
     updateSettings: updateSettings,
     persons: persons,

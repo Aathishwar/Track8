@@ -155,7 +155,11 @@
       'setKeepAlive', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
       'permCard', 'permTitle', 'permSteps', 'permSite', 'permSiteUrl', 'copySiteBtn', 'recheckNotifyBtn',
       'keepAliveWarning', 'batterySteps', 'vibrateNote', 'pushStatus',
-      'sumReminders', 'sumWorkday', 'sumProfile', 'sumInstall',
+      'sumReminders', 'sumWorkday', 'sumProfile', 'sumInstall', 'sumAccount',
+      'signinScreen', 'signinEmailForm', 'signinCodeForm', 'signinEmail', 'signinCode',
+      'signinSendBtn', 'signinVerifyBtn', 'signinResendBtn', 'signinBackBtn',
+      'signinSentTo', 'signinError',
+      'syncStatusText', 'syncNowBtn', 'signOutBtn',
       'renamePersonInput', 'renamePersonRole', 'savePersonBtn', 'deletePersonBtn',
       'exportExcelBtn', 'exportBtn', 'importBtn', 'importFileInput', 'installBtn', 'installHint',
       'progressRingContainer', 'toastHost'
@@ -924,6 +928,47 @@
       var installed = global.matchMedia && global.matchMedia('(display-mode: standalone)').matches;
       el.sumInstall.textContent = installed ? 'Installed' : 'Not on your home screen yet';
     }
+
+    renderSyncStatus();
+  }
+
+  /**
+   * Whether this device's hours are actually being saved anywhere but here.
+   *
+   * Worth stating plainly rather than assuming: "signed in" and "syncing" are
+   * not the same thing, and a phone that has been offline for a week is in the
+   * second state without knowing it.
+   */
+  function renderSyncStatus() {
+    if (!global.T8Sync) return;
+    var s = global.T8Sync.status();
+
+    if (el.sumAccount) {
+      el.sumAccount.textContent = !s.available ? 'Not available on this server'
+        : s.signedIn ? s.email
+          : 'Not signed in';
+    }
+
+    if (el.syncStatusText) {
+      var message;
+      if (!s.available) {
+        message = 'This copy of Track8 has no sync server, so your hours live on this device only. Take a backup now and then.';
+      } else if (!s.signedIn) {
+        message = 'Not signed in. Your hours are on this device only.';
+      } else if (!s.online) {
+        message = 'Signed in as ' + s.email + '. Offline right now - everything is saved here and will sync when you are back.';
+      } else if (s.lastSyncOk === false) {
+        message = 'Signed in as ' + s.email + ', but the last sync failed (' + s.error + '). It will retry on its own.';
+      } else if (s.lastSyncAt) {
+        message = 'Signed in as ' + s.email + '. Last synced ' + clockTime(s.lastSyncAt) + '.';
+      } else {
+        message = 'Signed in as ' + s.email + '. First sync has not run yet.';
+      }
+      el.syncStatusText.textContent = message;
+    }
+
+    if (el.signOutBtn) el.signOutBtn.hidden = !s.signedIn;
+    if (el.syncNowBtn) el.syncNowBtn.hidden = !s.signedIn;
   }
 
   /* ---------------------------------------------------------------- views */
@@ -1062,6 +1107,7 @@
     renderNotifyCard: renderNotifyCard,
     renderKeepAliveStatus: renderKeepAliveStatus,
     renderPushStatus: renderPushStatus,
+    renderSyncStatus: renderSyncStatus,
     renderSettingsSummaries: renderSettingsSummaries,
     showView: showView,
     openModal: openModal,
