@@ -622,6 +622,10 @@ body.modal-open {
 .progress-ring {
   width: 100%;
   height: 100%;
+  /* Explicit paint order for the four things stacked in this box: the halo and
+     the sweep are pseudo-elements and would otherwise paint over the stroke and
+     the digits, since generated content comes last in tree order. */
+  z-index: 1;
 }
 
 /* Static glow behind the ring. This replaces the drop-shadow filter that used
@@ -635,6 +639,7 @@ body.modal-open {
 .progress-ring-container::before {
   content: '';
   position: absolute;
+  z-index: 0;
   inset: 0;
   border-radius: 50%;
   background: radial-gradient(circle at 50% 50%,
@@ -648,6 +653,63 @@ body.modal-open {
 
 .progress-ring-container.lit::before {
   opacity: 1;
+}
+
+/* ------------------------------------------------------ the earning sweep */
+
+/* A soft light that travels around the ring while, and only while, time is
+   being credited. It is not the progress: the ring advances 0.0125° a second,
+   eighty seconds to move one degree, so real progress cannot be seen moving at
+   all. This is a heartbeat, and the thing it reports is the one users get
+   wrong — whether the clock is earning. It runs during work and meetings and
+   fades out on break, lunch and pause, where nothing is being counted.
+   Fading rather than freezing: a stopped blob at whatever angle it reached
+   reads as a rendering artefact, and fading costs nothing while resting.
+
+   Built as an off-centre radial gradient on a rotating box rather than a conic
+   gradient with a mask: masking is the part older Android WebViews get wrong,
+   and a blob at 42% from the centre already sits on the stroke, which is at
+   92/110 of this box's radius. */
+.progress-ring-container::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 8%,
+    rgba(52, 211, 153, 0.42),
+    transparent 34%);
+  opacity: 0;
+  transition: opacity var(--motion-slow) var(--ease-out);
+  pointer-events: none;
+}
+
+/* Nine seconds a turn. A loading spinner is about one, and reading as a
+   spinner is the failure mode here: this has to say "running", never "busy". */
+.progress-ring-container.earning::after {
+  opacity: 1;
+  animation: dial-sweep 9s linear infinite;
+  will-change: transform;
+}
+
+@keyframes dial-sweep {
+  to { transform: rotate(360deg); }
+}
+
+/* Meetings are credited too, so the sweep runs; it just takes their colour. */
+.progress-ring-container.tone-meeting::after {
+  background: radial-gradient(circle at 50% 8%,
+    rgba(96, 165, 250, 0.42),
+    transparent 34%);
+}
+
+/* The blanket reduced-motion rule collapses the animation to a single 0.01ms
+   pass, which would leave the blob parked at the top looking like a deliberate
+   highlight. Nothing here carries information the ring does not, so it goes. */
+@media (prefers-reduced-motion: reduce) {
+  .progress-ring-container::after {
+    display: none;
+  }
 }
 
 /* Fires once when the daily target is reached. Scale only — no layout. */
@@ -725,6 +787,7 @@ body.modal-open {
 
 .timer-center-content {
   position: absolute;
+  z-index: 2;
   inset: 0;
   display: flex;
   flex-direction: column;

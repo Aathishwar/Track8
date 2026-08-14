@@ -381,6 +381,10 @@
       ring.classList.toggle('tone-resting', resting);
       ring.classList.toggle('tone-lunch', state === 'LUNCH');
       ring.classList.toggle('tone-paused', state === 'PAUSED');
+      // The travelling light runs only while the clock is actually earning, so
+      // its presence answers "is this time counting?" without a word. Meetings
+      // are credited, so they keep it; break, lunch and pause do not.
+      ring.classList.toggle('earning', state === 'WORKING' || state === 'MEETING');
       celebrateOnce(ring, ratio >= 1, day.dateKey);
     }
 
