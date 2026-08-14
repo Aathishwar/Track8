@@ -35,6 +35,18 @@
   var openShiftDismissed = false;
   var deferredInstallPrompt = null;
 
+  /**
+   * Midnight on the Monday of a date's week, as a timestamp.
+   *
+   * Only used to compare two weeks, which is why it collapses the whole week
+   * to one number: two dates in the same week give the same result.
+   */
+  function startOfWeekMs(date) {
+    var d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return d.getTime();
+  }
+
   /* ------------------------------------------------------------ day access */
 
   function today(now) {
@@ -809,7 +821,7 @@
         // Blocked is a dead end from JavaScript, so send the user somewhere
         // that explains the way out rather than firing a toast that only
         // restates the problem.
-        openSettingsAt('reminders');
+        openSettingsAt('reminders', true);
         UI.toast('Notifications are blocked. Here is how to switch them back on.', 'warn');
       }
     });
@@ -898,11 +910,43 @@
     group.querySelector('.settings-group-header').setAttribute('aria-expanded', open ? 'true' : 'false');
   }
 
-  function openSettingsAt(groupName) {
+  /**
+   * Open settings, optionally showing one group and nothing else.
+   *
+   * Scoped is how the header bell opens it: a bell that lands on six collapsed
+   * groups makes the user hunt for the one it is named after. The markup is
+   * the same either way - only a data-only attribute and the title change - so
+   * every control inside keeps its single binding.
+   */
+  function openSettingsAt(groupName, onlyThisGroup) {
     UI.fillSettingsForm(Notify);
     UI.openModal(el.settingsModal);
+
+    if (onlyThisGroup) {
+      el.settingsBody.setAttribute('data-only', groupName);
+      el.settingsTitle.textContent = SETTINGS_GROUP_TITLE[groupName] || 'Settings';
+      el.showAllSettingsBtn.hidden = false;
+    } else {
+      showAllSettings();
+    }
+
     var group = el.settingsBody.querySelector('[data-group="' + groupName + '"]');
     if (group) toggleSettingsGroup(group, true);
+  }
+
+  var SETTINGS_GROUP_TITLE = {
+    reminders: 'Notifications',
+    workday: 'Work day',
+    profile: 'Profile',
+    account: 'Account & sync',
+    data: 'Data & backup',
+    install: 'Install'
+  };
+
+  function showAllSettings() {
+    el.settingsBody.removeAttribute('data-only');
+    el.settingsTitle.textContent = 'Settings';
+    el.showAllSettingsBtn.hidden = true;
   }
 
   function testNotification() {
@@ -982,24 +1026,52 @@
     el.closeAddPersonModal.addEventListener('click', function () { UI.closeModal(el.addPersonModal); });
     el.cancelAddPerson.addEventListener('click', function () { UI.closeModal(el.addPersonModal); });
 
-    // Week and month navigation
-    document.getElementById('prevWeekBtn').addEventListener('click', function () {
+    // Week and month navigation. Forward is disabled by the renderers once the
+    // anchor reaches the current period; the guards here repeat that in code,
+    // because a disabled attribute is a hint to the pointer and not a rule.
+    el.prevWeekBtn.addEventListener('click', function () {
       weekAnchor.setDate(weekAnchor.getDate() - 7);
       UI.renderWeek(weekAnchor, Date.now());
     });
-    document.getElementById('nextWeekBtn').addEventListener('click', function () {
-      weekAnchor.setDate(weekAnchor.getDate() + 7);
+    el.nextWeekBtn.addEventListener('click', function () {
+      var now = Date.now();
+      var forward = new Date(weekAnchor.getTime());
+      forward.setDate(forward.getDate() + 7);
+      // Monday of the week being moved into: stepping onto the current week is
+      // allowed, stepping past it is not.
+      if (startOfWeekMs(forward) > startOfWeekMs(new Date(now))) return;
+      weekAnchor = forward;
+      UI.renderWeek(weekAnchor, now);
+    });
+    el.thisWeekBtn.addEventListener('click', function () {
+      weekAnchor = new Date();
       UI.renderWeek(weekAnchor, Date.now());
     });
+
     el.prevMonthBtn.addEventListener('click', function () {
       monthAnchor.setDate(1);
       monthAnchor.setMonth(monthAnchor.getMonth() - 1);
       UI.renderCalendar(monthAnchor, Date.now());
     });
     el.nextMonthBtn.addEventListener('click', function () {
-      monthAnchor.setDate(1);
-      monthAnchor.setMonth(monthAnchor.getMonth() + 1);
+      var today = new Date();
+      var forward = new Date(monthAnchor.getFullYear(), monthAnchor.getMonth() + 1, 1);
+      if (forward.getFullYear() > today.getFullYear() ||
+        (forward.getFullYear() === today.getFullYear() && forward.getMonth() > today.getMonth())) return;
+      monthAnchor = forward;
       UI.renderCalendar(monthAnchor, Date.now());
+    });
+    el.thisMonthBtn.addEventListener('click', function () {
+      monthAnchor = new Date();
+      UI.renderCalendar(monthAnchor, Date.now());
+    });
+
+    // A bar is a button carrying its own date, so the week chart opens the
+    // same day sheet the calendar does - and that sheet is where "Correct this
+    // day" lives. Delegated, because renderWeek replaces the columns.
+    el.histogramBars.addEventListener('click', function (event) {
+      var col = event.target.closest('[data-date-key]');
+      if (col && !col.disabled) openDayDetails(col.getAttribute('data-date-key'));
     });
 
     // Calendar day selection, keyboard included
@@ -1036,12 +1108,15 @@
       el.openShiftBanner.hidden = true;
     });
 
-    // Settings
+    // Settings. The nav tab opens the whole sheet; the header bell opens it
+    // scoped to reminders, so clear any leftover scope here.
     el.openSettingsBtn.addEventListener('click', function () {
       UI.fillSettingsForm(Notify);
       UI.openModal(el.settingsModal);
+      showAllSettings();
     });
     el.closeSettingsModal.addEventListener('click', function () { UI.closeModal(el.settingsModal); });
+    el.showAllSettingsBtn.addEventListener('click', showAllSettings);
 
     // Accordion. Delegated, so the group markup can change without rebinding.
     el.settingsBody.addEventListener('click', function (event) {
@@ -1089,7 +1164,7 @@
     el.notifyBtn.addEventListener('click', function () {
       // Blocked goes to the explanation, not to a prompt that cannot appear.
       if (Notify.permission() === 'granted' || Notify.permission() === 'denied') {
-        openSettingsAt('reminders');
+        openSettingsAt('reminders', true);
       } else {
         enableNotifications();
       }

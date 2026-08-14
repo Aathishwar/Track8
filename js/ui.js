@@ -19,12 +19,6 @@
   var RING_RADIUS = 92;
   var CIRCUMFERENCE = 2 * Math.PI * RING_RADIUS;
 
-  // Histogram geometry, kept in sync with styles.css. BAR_BASE_PX is the gap
-  // between the wrapper's bottom edge and the bottom of a bar track: the
-  // day-label row plus the flex gap above it.
-  var BAR_TRACK_PX = 140;
-  var BAR_BASE_PX = 22 + 4;
-
   var el = {};
 
   var STATE_LABEL = {
@@ -131,7 +125,7 @@
       'personDropdown', 'personList', 'openAddPersonModal', 'notifyBtn', 'notifyDot',
       'viewTimer', 'viewWeek', 'viewCalendar',
       'currentDayName', 'currentFullDate', 'statusPill', 'statusText',
-      'progressRingFill', 'timerDigits', 'timerAnnouncement', 'loggedHoursText', 'targetGoalText',
+      'progressRingFill', 'timerDigits', 'timerAnnouncement',
       'percentageBadge', 'breakDurationText', 'lunchDurationText', 'pausedDurationText',
       'breakBanner', 'breakBannerTitle', 'breakBannerMeta', 'breakBannerAction',
       'reminderStatus', 'meetingDurationText',
@@ -140,8 +134,9 @@
       'btnReopen', 'btnEditToday',
       'clockInText', 'clockOutText',
       'openShiftBanner', 'openShiftText', 'openShiftEndBtn', 'openShiftDismissBtn',
-      'weeklyAverageText', 'histogramBars', 'weekRangeText',
+      'weeklyAverageText', 'histogramBars', 'weekRangeText', 'weekHeading',
       'weekTotalText', 'weekTargetText', 'weekBalanceText',
+      'prevWeekBtn', 'nextWeekBtn', 'thisWeekBtn', 'thisMonthBtn',
       'calendarMonthTitle', 'calendarDays', 'prevMonthBtn', 'nextMonthBtn',
       'monthDaysText', 'monthTotalText', 'monthBalanceText',
       'addPersonModal', 'addPersonForm', 'personNameInput', 'personRoleInput',
@@ -151,6 +146,7 @@
       'editStartTime', 'editWorkH', 'editWorkM', 'editMeetingM', 'editBreakM', 'editLunchM',
       'editNote', 'deleteDayBtn', 'cancelEditDay',
       'settingsModal', 'closeSettingsModal', 'openSettingsBtn', 'settingsBody',
+      'settingsTitle', 'showAllSettingsBtn',
       'setDailyTarget', 'setBreakAlert', 'setBreakRepeat', 'setLunchAlert', 'setLunchRepeat',
       'setKeepAlive', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
       'permCard', 'permTitle', 'permSteps', 'permSite', 'permSiteUrl', 'copySiteBtn', 'recheckNotifyBtn',
@@ -237,9 +233,11 @@
 
     // The headline number is credited time: worked plus meetings. Meetings are
     // work, so they move the ring and count against the daily target.
+    // The digits carry the logged total and the ring carries the target, so
+    // the "3h 12m / 8h 00m" line underneath was a third copy of both. Only the
+    // percentage survives; announce() still gives assistive tech the full
+    // "x of y" reading.
     el.timerDigits.textContent = hms(summary.creditedMs);
-    el.loggedHoursText.textContent = hm(summary.creditedMs);
-    el.targetGoalText.textContent = hm(target);
     el.meetingDurationText.textContent = shortDuration(summary.meetingMs);
     el.breakDurationText.textContent = shortDuration(summary.breakMs);
     el.lunchDurationText.textContent = shortDuration(summary.lunchMs);
@@ -463,8 +461,19 @@
 
     el.histogramBars.innerHTML = '';
     entries.forEach(function (entry) {
-      var col = document.createElement('div');
+      // A button rather than a div: tapping a day opens its log, which is
+      // where "Correct this day" lives. Future days hold nothing to open and
+      // cannot be corrected in advance, so they are disabled rather than
+      // opening an empty sheet.
+      var col = document.createElement('button');
+      col.type = 'button';
       col.className = 'bar-column' + (entry.isToday ? ' today' : '') + (entry.isFuture ? ' future' : '');
+      col.setAttribute('data-date-key', entry.key);
+      col.disabled = entry.isFuture;
+      col.setAttribute('aria-label',
+        entry.date.toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' }) +
+        ', ' + hm(entry.summary.creditedMs) + ' counted' +
+        (entry.isFuture ? '' : '. Open the day'));
 
       // Rendered top-down inside a bottom-aligned flex column, so the array is
       // reversed: work ends up at the base of the bar.
@@ -499,13 +508,15 @@
 
     // Put the goal line on the same scale as the bars rather than at a fixed
     // height, so it stays truthful when the scale stretches for a long day.
-    // BAR_TRACK_PX and BAR_LABEL_PX mirror the two fixed heights in styles.css.
+    //
+    // Only the ratio is published; styles.css turns it into a position against
+    // the track band. Setting a pixel offset here instead was wrong in two
+    // ways: the track is fluid now, and the first render happens while the
+    // week view is still hidden, so every rect it could have measured reads
+    // zero and the line stayed where that fallback put it.
     var goalLine = document.querySelector('.target-line-indicator');
     if (goalLine) {
-      // The rule is translateY(50%) in CSS, so this offset lands the line's
-      // centre - not its bottom edge - on the target height.
-      var offset = BAR_BASE_PX + BAR_TRACK_PX * Math.min(1, target / scale);
-      goalLine.style.bottom = offset.toFixed(1) + 'px';
+      goalLine.style.setProperty('--goal-ratio', Math.min(1, target / scale).toFixed(4));
       goalLine.querySelector('.target-label').textContent = compactHours(target);
     }
 
@@ -523,7 +534,20 @@
       monday.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' - ' +
       sunday.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
-    el.weeklyAverageText.textContent = 'Avg ' + hm(avgMs) + '/day';
+    // Nothing is recorded ahead of today, so forward stops at the current
+    // week and the way back is one tap rather than a count of arrow presses.
+    // Both are set here rather than in the click handlers, so every path that
+    // re-renders - a resume, a profile switch, midnight rollover - leaves them
+    // correct.
+    var atCurrent = TL.dateKeyOf(monday) === TL.dateKeyOf(startOfWeek(new Date(now)));
+    if (el.nextWeekBtn) el.nextWeekBtn.disabled = atCurrent;
+    if (el.thisWeekBtn) el.thisWeekBtn.hidden = atCurrent;
+    if (el.weekHeading) el.weekHeading.textContent = atCurrent ? 'This week' : 'Past week';
+
+    // No "Avg" prefix: the cell above it is already labelled Average, and the
+    // extra word pushed the value onto a second line, making that one cell
+    // taller than the other three.
+    el.weeklyAverageText.textContent = hm(avgMs) + '/day';
     el.weekTotalText.textContent = hm(totalMs);
     el.weekTargetText.textContent = hm(weekTarget);
 
@@ -544,6 +568,13 @@
     var todayKey = TL.dateKeyOf(now);
 
     el.calendarMonthTitle.textContent = monthAnchor.toLocaleDateString([], { month: 'long', year: 'numeric' });
+
+    // Same rule as the week: forward stops at the current month, and getting
+    // back is one tap.
+    var today = new Date(now);
+    var atCurrentMonth = year === today.getFullYear() && month === today.getMonth();
+    if (el.nextMonthBtn) el.nextMonthBtn.disabled = atCurrentMonth;
+    if (el.thisMonthBtn) el.thisMonthBtn.hidden = atCurrentMonth;
 
     var firstIndex = (new Date(year, month, 1).getDay() + 6) % 7;
     var totalDays = new Date(year, month + 1, 0).getDate();

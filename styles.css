@@ -62,10 +62,25 @@
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
   --shadow-glow: 0 0 20px rgba(16, 185, 129, 0.28);
 
-  /* Histogram geometry. BAR_TRACK_PX / BAR_LABEL_PX in js/ui.js must match:
-     the goal line is positioned in pixels against this same scale. */
+  /* Histogram geometry. The track is a minimum rather than a fixed height —
+     the chart grows into whatever the week card is not using — so the goal
+     line cannot be placed at a fixed pixel offset. Instead every piece of
+     chrome around the track is a token, the two sums below describe the track
+     band in terms of the wrapper, and ui.js supplies only --goal-ratio. That
+     keeps the line correct through a resize, an orientation change and the
+     first paint, none of which run the renderer again. */
   --bar-track-height: 140px;
   --bar-label-height: 22px;
+  --bar-val-height: 14px;
+  --bar-gap: 4px;
+  --histogram-pad-top: 18px;
+
+  /* Height between the wrapper's bottom edge and the bottom of a track. */
+  --bar-base-offset: calc(var(--bar-gap) + var(--bar-label-height));
+  /* Everything in the wrapper that is not track. */
+  --bar-chrome: calc(
+    var(--histogram-pad-top) + var(--bar-val-height) + var(--bar-gap) + var(--bar-base-offset)
+  );
 
   --nav-height: 62px;
   --safe-bottom: env(safe-area-inset-bottom, 0px);
@@ -232,6 +247,17 @@ body.modal-open {
 .icon-btn:active,
 .icon-btn-sm:active {
   background: var(--bg-surface-hover);
+}
+
+/* There is no data ahead of today, so forward stops at the current period.
+   Greyed rather than removed: a control that disappears reads as a bug. */
+.icon-btn-sm:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.icon-btn-sm:disabled:active {
+  background: var(--bg-surface);
 }
 
 .notify-btn.enabled {
@@ -707,10 +733,6 @@ body.modal-open {
   color: var(--text-secondary);
 }
 
-.target-goal {
-  color: var(--text-muted);
-}
-
 .percentage-badge {
   padding: 2px 7px;
   border-radius: var(--radius-full);
@@ -980,9 +1002,53 @@ body.modal-open {
   text-align: center;
 }
 
+/* Jump back to the current period. Hidden while you are already on it, so it
+   costs nothing in the common case. */
+.return-chip {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 11px 5px 8px;
+  border: 1px solid var(--border-accent);
+  border-radius: var(--radius-full);
+  background: rgba(16, 185, 129, 0.1);
+  color: var(--primary-emerald);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--motion-fast) var(--ease-out), background 0.15s;
+}
+
+.return-chip:active {
+  transform: scale(0.96);
+  background: rgba(16, 185, 129, 0.18);
+}
+
+.return-chip:focus-visible {
+  outline: 2px solid var(--primary-emerald);
+  outline-offset: 2px;
+}
+
+/* The week chart takes whatever height the card is not using, instead of
+   leaving a dead band above the bottom nav. Everything else in the card is
+   intrinsically sized, so the wrapper is the only thing that grows. */
+#viewWeek {
+  flex: 1;
+  min-height: 0;
+}
+
+#viewWeek .analytics-card {
+  flex: 1;
+  min-height: 0;
+}
+
 .histogram-wrapper {
   position: relative;
-  padding-top: 18px;
+  padding-top: var(--histogram-pad-top);
+  flex: 1;
+  min-height: 0;
+  display: flex;
 }
 
 .target-line-indicator {
@@ -997,8 +1063,12 @@ body.modal-open {
   gap: 6px;
   pointer-events: none;
   z-index: 2;
-  /* js/ui.js sets `bottom` to the target's height on the bar scale; shifting
-     down by half the row puts the dashes on that line rather than above it. */
+  /* The track band is the wrapper minus its chrome, and --goal-ratio (set by
+     ui.js) is where the target falls on the bar scale. Percentages here
+     resolve against the wrapper, so this stays right at any height without
+     anything being measured. Shifting down by half the row puts the dashes on
+     the line rather than above it. */
+  bottom: calc(var(--bar-base-offset) + (100% - var(--bar-chrome)) * var(--goal-ratio, 1));
   transform: translateY(50%);
 }
 
@@ -1022,29 +1092,59 @@ body.modal-open {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
   gap: 6px;
-  align-items: end;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
 }
 
+/* A button, not a div: tapping a day opens its log. The three rows are the
+   value caption, the track, and the day label; the track takes the rest, which
+   is what lets the chart grow into the card's spare height. --bar-track-height
+   is now the floor rather than the height. */
 .bar-column {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  display: grid;
+  grid-template-rows: var(--bar-val-height) minmax(var(--bar-track-height), 1fr) var(--bar-label-height);
+  justify-items: center;
+  gap: var(--bar-gap);
   min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform var(--motion-fast) var(--ease-out);
+}
+
+.bar-column:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.bar-column:focus-visible {
+  outline: 2px solid var(--primary-emerald);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Future days hold nothing to open and cannot be corrected in advance. */
+.bar-column:disabled {
+  cursor: default;
 }
 
 .bar-val {
   font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
-  height: 14px;
+  height: var(--bar-val-height);
   font-variant-numeric: tabular-nums;
 }
 
 .bar-track {
   display: block;
   width: 100%;
-  height: var(--bar-track-height);
+  height: 100%;
+  min-height: 0;
   background: rgba(255, 255, 255, 0.035);
   border-radius: var(--radius-sm);
 }
@@ -1425,6 +1525,118 @@ body.modal-open {
 @keyframes slide-up {
   from { transform: translateY(18px); opacity: 0; }
   to { transform: translateY(0); opacity: 1; }
+}
+
+/* Settings is a destination rather than a glance, so on a phone it takes the
+   whole screen: a 88vh card floating on a dimmed backdrop wasted the edges and
+   still needed a scroll. Above 560px the shared rule re-centres it and the
+   width cap below turns it back into a normal card. */
+.modal-overlay.fullscreen {
+  padding: 0;
+  align-items: stretch;
+  /* The sheet covers the overlay completely, so blurring what is behind it is
+     a full-screen GPU pass nobody can see. */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Opaque rather than the usual translucent glass: nothing shows through a
+   full-screen sheet anyway, and the sticky header below has to paint the same
+   colour as the panel it sits on. */
+.modal-card.sheet-full {
+  max-width: none;
+  max-height: none;
+  height: 100%;
+  border-radius: 0;
+  border-left: 0;
+  border-right: 0;
+  background: var(--bg-surface);
+  box-shadow: none;
+  display: flex;
+  flex-direction: column;
+  padding: calc(14px + var(--safe-top)) 16px calc(18px + var(--safe-bottom));
+}
+
+/* The title stays put while the groups scroll: with six groups the close
+   button was otherwise several screens up. */
+.sheet-full .modal-header {
+  position: sticky;
+  top: calc(-14px - var(--safe-top));
+  z-index: 1;
+  margin: 0 -16px 12px;
+  padding: 0 16px 12px;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.sheet-full .settings-body {
+  flex: 1;
+}
+
+/* Scoped mode. The header bell opens settings showing reminders alone, because
+   a bell that lands on six collapsed groups makes the user hunt for the one it
+   was named after. app.js sets data-only to the group it wants. */
+.settings-body[data-only] .settings-group {
+  display: none;
+}
+
+.settings-body[data-only="reminders"] [data-group="reminders"],
+.settings-body[data-only="workday"] [data-group="workday"],
+.settings-body[data-only="profile"] [data-group="profile"],
+.settings-body[data-only="account"] [data-group="account"],
+.settings-body[data-only="data"] [data-group="data"],
+.settings-body[data-only="install"] [data-group="install"] {
+  display: block;
+}
+
+/* Alone on the screen, the group is the screen: its header would just repeat
+   the modal title, and there is nothing to collapse it in favour of. */
+.settings-body[data-only] .settings-group {
+  border: 0;
+  background: none;
+}
+
+.settings-body[data-only] .settings-group-header {
+  display: none;
+}
+
+.settings-body[data-only] .settings-group-body {
+  padding: 0;
+}
+
+/* A way through to the rest, so the scoped sheet is not a dead end. app.js
+   unhides it only while data-only is set. */
+.settings-all-link {
+  margin-top: 14px;
+  width: 100%;
+}
+
+/* Back to a normal centred card once there is room for one. */
+@media (min-width: 560px) {
+  .modal-overlay.fullscreen {
+    padding: 16px;
+    padding-bottom: calc(16px + var(--safe-bottom));
+    align-items: center;
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+  }
+
+  .modal-card.sheet-full {
+    max-width: 480px;
+    max-height: 88dvh;
+    height: auto;
+    border-radius: var(--radius-lg);
+    border-left: 1px solid var(--border-subtle);
+    border-right: 1px solid var(--border-subtle);
+    box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    padding: 18px 16px;
+  }
+
+  /* Stays opaque here too: the sticky header has to paint the same colour as
+     the panel, and a translucent one would show the groups sliding under it. */
+  .sheet-full .modal-header {
+    top: -18px;
+  }
 }
 
 .modal-header {

@@ -120,8 +120,11 @@
             <div class="timer-center-content" aria-hidden="true">
               <span class="timer-label">On the clock</span>
               <span class="timer-digits" id="timerDigits">00:00:00</span>
+              <!-- The digits above are the logged total and the ring is the
+                   target, so spelling out "3h 12m / 8h 00m" underneath said the
+                   same thing a third time. The percentage is the one reading
+                   neither of the other two gives at a glance. -->
               <span class="target-progress-text">
-                <span id="loggedHoursText">0h 00m</span> / <span class="target-goal" id="targetGoalText">8h 00m</span>
                 <span class="percentage-badge" id="percentageBadge">0%</span>
               </span>
             </div>
@@ -254,19 +257,34 @@
       <section class="view" id="viewWeek" hidden>
         <div class="analytics-card glass-panel">
           <div class="card-title-row">
-            <h2>This week</h2>
+            <h2 id="weekHeading">This week</h2>
             <div class="month-nav">
               <button type="button" class="icon-btn-sm" id="prevWeekBtn" aria-label="Previous week">‹</button>
               <span class="month-title" id="weekRangeText"></span>
+              <!-- Forward is disabled on the current week rather than hidden:
+                   a control that vanishes reads as a bug, one that greys out
+                   reads as "there is nothing there", which is the truth. -->
               <button type="button" class="icon-btn-sm" id="nextWeekBtn" aria-label="Next week">›</button>
             </div>
           </div>
+
+          <!-- Appears only once you have navigated away from the current week,
+               so getting back is one tap instead of counting arrow presses. -->
+          <button type="button" class="return-chip" id="thisWeekBtn" hidden>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="11 17 6 12 11 7"></polyline>
+              <polyline points="18 17 13 12 18 7"></polyline>
+            </svg>
+            Back to this week
+          </button>
 
           <div class="histogram-wrapper">
             <div class="target-line-indicator">
               <span class="target-label">8h</span>
               <span class="dash-line"></span>
             </div>
+            <!-- Each column is a button: tapping a day opens its log, which
+                 carries the "Correct this day" action. -->
             <div class="histogram-bars" id="histogramBars"></div>
           </div>
 
@@ -311,6 +329,14 @@
               <button type="button" class="icon-btn-sm" id="nextMonthBtn" aria-label="Next month">›</button>
             </div>
           </div>
+
+          <button type="button" class="return-chip" id="thisMonthBtn" hidden>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="11 17 6 12 11 7"></polyline>
+              <polyline points="18 17 13 12 18 7"></polyline>
+            </svg>
+            Back to this month
+          </button>
 
           <div class="calendar-legend">
             <span class="legend-item"><span class="dot dot-completed"></span>Target met</span>
@@ -462,8 +488,13 @@
       </div>
     </div>
 
-    <div class="modal-overlay" id="settingsModal" hidden>
-      <div class="modal-card glass-panel tall" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <!-- Full-height sheet on a phone: settings is a destination, not a
+         glance, and a 88vh card floating on a dimmed background wasted the
+         edges while still needing a scroll. The `only-<group>` class narrows
+         it to one group - the header bell opens it that way, since a bell
+         should land on reminders and nothing else. -->
+    <div class="modal-overlay fullscreen" id="settingsModal" hidden>
+      <div class="modal-card glass-panel sheet-full" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
         <div class="modal-header">
           <h3 id="settingsTitle">Settings</h3>
           <button type="button" class="close-btn" id="closeSettingsModal" aria-label="Close">&times;</button>
@@ -743,6 +774,10 @@
             </div>
           </section>
         </div>
+
+        <!-- Only rendered while the sheet is scoped to one group, so the bell
+             is not a dead end. -->
+        <button type="button" class="btn btn-secondary settings-all-link" id="showAllSettingsBtn" hidden>All settings</button>
       </div>
     </div>
 

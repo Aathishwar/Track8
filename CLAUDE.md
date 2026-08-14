@@ -153,9 +153,15 @@ button from anywhere else.
 **Anything user-controlled that reaches `innerHTML` goes through `UI.escapeHtml()`** —
 profile names and day notes both do, and both travel through export/import.
 
-**`BAR_TRACK_PX` / `BAR_BASE_PX` in `ui.js` mirror `--bar-track-height` and the day-label
-row plus flex gap in `styles.css`.** The week goal line is positioned in pixels against that
-scale. Change one, change the other.
+**The week goal line is placed in CSS, not JavaScript.** `renderWeek()` publishes only
+`--goal-ratio`; `styles.css` turns it into a position with
+`calc(var(--bar-base-offset) + (100% - var(--bar-chrome)) * var(--goal-ratio))`. It used to
+set a pixel offset from `BAR_TRACK_PX` / `BAR_BASE_PX`, constants mirroring the stylesheet,
+and that broke twice over once the chart became fluid: the track is no longer 140px, and the
+first render happens while `#viewWeek` is still `hidden`, so every rect it could have
+measured reads zero and the line stayed at the fallback. If you add or resize anything
+between the wrapper's top edge and the bottom of a bar — the value caption, the label row,
+either gap — update `--bar-chrome` and `--bar-base-offset` with it.
 
 **Bump `CACHE` in `sw.js`** when shell files are added or removed, and add new `js/*.js` to
 `SHELL`. The fetch handler is network-first with cache fallback, so an update lands on the
