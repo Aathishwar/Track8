@@ -294,7 +294,12 @@
     var state = summary.state;
     var inSegment = SEGMENT_STATES[state] === true;
 
-    el.timerLabel.textContent = DIAL_LABEL[state] || DIAL_LABEL.IDLE;
+    // The caption, the chip and the swap container all arrived with this
+    // release; the digits did not. Against an index.html that predates it -
+    // which a rolling deploy can serve for a few seconds - the clock keeps
+    // running and only the new parts sit out. Unguarded this threw once per
+    // second, on the one path that must never stop.
+    if (el.timerLabel) el.timerLabel.textContent = DIAL_LABEL[state] || DIAL_LABEL.IDLE;
     el.timerDigits.textContent = hms(inSegment ? summary.openMs : summary.creditedMs);
 
     // The chip is what the banner below used to spell out. Under the limit it
@@ -320,19 +325,23 @@
       chip = 'not counting';
     }
 
-    el.dialChip.hidden = chip === '';
-    el.dialChip.textContent = chip;
-    el.dialChip.classList.toggle('over', over);
+    if (el.dialChip) {
+      el.dialChip.hidden = chip === '';
+      el.dialChip.textContent = chip;
+      el.dialChip.classList.toggle('over', over);
+    }
 
     // Replay the swap only when the activity changed. renderTimer runs every
     // second, and re-running it on each tick would leave the centre of the
     // screen permanently animating.
     if (state !== lastDialState) {
       lastDialState = state;
-      el.timerCenter.classList.remove('swap');
-      // One layout read, once per state change, to restart the animation.
-      void el.timerCenter.offsetWidth;
-      el.timerCenter.classList.add('swap');
+      if (el.timerCenter) {
+        el.timerCenter.classList.remove('swap');
+        // One layout read, once per state change, to restart the animation.
+        void el.timerCenter.offsetWidth;
+        el.timerCenter.classList.add('swap');
+      }
     }
   }
 

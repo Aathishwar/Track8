@@ -36,6 +36,20 @@
   var deferredInstallPrompt = null;
 
   /**
+   * Bind a listener only if the element is there.
+   *
+   * For controls introduced by a release the loaded index.html may predate. A
+   * rolling deploy can serve an old page against new scripts for a few
+   * seconds, and `null.addEventListener` throws out of init, unbinding
+   * everything after it - the timer keeps running while settings, sync and
+   * export are silently dead until the next reload. Skipping one control is a
+   * far better failure than losing half the app.
+   */
+  function bindIfPresent(node, type, handler) {
+    if (node) node.addEventListener(type, handler);
+  }
+
+  /**
    * Midnight on the Monday of a date's week, as a timestamp.
    *
    * Only used to compare two weeks, which is why it collapses the whole week
@@ -922,10 +936,13 @@
     UI.fillSettingsForm(Notify);
     UI.openModal(el.settingsModal);
 
+    // Guarded for the same reason as bindIfPresent: against an index.html that
+    // predates this release, the sheet simply opens unscoped rather than
+    // throwing and leaving the modal half-configured.
     if (onlyThisGroup) {
       el.settingsBody.setAttribute('data-only', groupName);
-      el.settingsTitle.textContent = SETTINGS_GROUP_TITLE[groupName] || 'Settings';
-      el.showAllSettingsBtn.hidden = false;
+      if (el.settingsTitle) el.settingsTitle.textContent = SETTINGS_GROUP_TITLE[groupName] || 'Settings';
+      if (el.showAllSettingsBtn) el.showAllSettingsBtn.hidden = false;
     } else {
       showAllSettings();
     }
@@ -945,8 +962,8 @@
 
   function showAllSettings() {
     el.settingsBody.removeAttribute('data-only');
-    el.settingsTitle.textContent = 'Settings';
-    el.showAllSettingsBtn.hidden = true;
+    if (el.settingsTitle) el.settingsTitle.textContent = 'Settings';
+    if (el.showAllSettingsBtn) el.showAllSettingsBtn.hidden = true;
   }
 
   function testNotification() {
@@ -1029,11 +1046,18 @@
     // Week and month navigation. Forward is disabled by the renderers once the
     // anchor reaches the current period; the guards here repeat that in code,
     // because a disabled attribute is a hint to the pointer and not a rule.
-    el.prevWeekBtn.addEventListener('click', function () {
+    //
+    // Bound through bindIfPresent because these controls arrived after the
+    // version some browsers may still be holding. A rolling deploy can serve a
+    // cached or old-instance index.html alongside this file for a few seconds,
+    // and binding straight onto a missing node threw out of init - which left
+    // everything below this line unbound, so the timer still ran but settings,
+    // sync and export were all dead until the next reload.
+    bindIfPresent(el.prevWeekBtn, 'click', function () {
       weekAnchor.setDate(weekAnchor.getDate() - 7);
       UI.renderWeek(weekAnchor, Date.now());
     });
-    el.nextWeekBtn.addEventListener('click', function () {
+    bindIfPresent(el.nextWeekBtn, 'click', function () {
       var now = Date.now();
       var forward = new Date(weekAnchor.getTime());
       forward.setDate(forward.getDate() + 7);
@@ -1043,7 +1067,7 @@
       weekAnchor = forward;
       UI.renderWeek(weekAnchor, now);
     });
-    el.thisWeekBtn.addEventListener('click', function () {
+    bindIfPresent(el.thisWeekBtn, 'click', function () {
       weekAnchor = new Date();
       UI.renderWeek(weekAnchor, Date.now());
     });
@@ -1061,7 +1085,7 @@
       monthAnchor = forward;
       UI.renderCalendar(monthAnchor, Date.now());
     });
-    el.thisMonthBtn.addEventListener('click', function () {
+    bindIfPresent(el.thisMonthBtn, 'click', function () {
       monthAnchor = new Date();
       UI.renderCalendar(monthAnchor, Date.now());
     });
@@ -1116,7 +1140,7 @@
       showAllSettings();
     });
     el.closeSettingsModal.addEventListener('click', function () { UI.closeModal(el.settingsModal); });
-    el.showAllSettingsBtn.addEventListener('click', showAllSettings);
+    bindIfPresent(el.showAllSettingsBtn, 'click', showAllSettings);
 
     // Accordion. Delegated, so the group markup can change without rebinding.
     el.settingsBody.addEventListener('click', function (event) {
