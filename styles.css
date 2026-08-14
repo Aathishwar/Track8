@@ -1330,6 +1330,19 @@ body.modal-open {
   border-radius: 50%;
 }
 
+/* Legend sample for a worked day. Matches the figure in the grid, so the key
+   shows the thing it is describing rather than a dot that no longer appears
+   on days with a record. */
+.legend-hours {
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.legend-hours.met   { color: var(--primary-emerald); }
+.legend-hours.short { color: var(--amber-warning); }
+
 .dot-completed { background: var(--primary-emerald); box-shadow: 0 0 6px var(--primary-glow); }
 .dot-partial   { background: var(--amber-warning); }
 .dot-off       { background: var(--slate-muted); opacity: 0.45; }
@@ -1432,6 +1445,21 @@ body.modal-open {
   height: 6px;
   border-radius: 50%;
 }
+
+/* Sits where the dot would have been on a day that was worked. Deliberately
+   smaller and lighter than the date above it: the month grid is read by date
+   first, and hours are the answer to a question you ask about one cell at a
+   time. */
+.cal-day-hours {
+  font-size: 9.5px;
+  font-weight: 600;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+}
+
+.cal-day-hours.met   { color: var(--primary-emerald); }
+.cal-day-hours.short { color: var(--amber-warning); }
 
 /* ------------------------------------------------------------- bottom nav */
 

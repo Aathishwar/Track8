@@ -84,6 +84,21 @@
     return m === 0 ? h + 'h' : h + 'h ' + m + 'm';
   }
 
+  /**
+   * "8h" / "7.5h" — one decimal, for a calendar cell about 44px wide.
+   *
+   * "7h 30m" does not fit there and wrapping it over two lines would make the
+   * grid taller than it is wide. A tenth of an hour is six minutes, which is
+   * the right resolution for a month at a glance; the exact figure is one tap
+   * away in the day details.
+   */
+  function cellHours(ms) {
+    var hours = Math.max(0, ms) / 3600000;
+    var text = hours.toFixed(1);
+    if (text.slice(-2) === '.0') text = text.slice(0, -2);
+    return text + 'h';
+  }
+
   /** "32m" / "1h 04m" for short durations like breaks. */
   function shortDuration(ms) {
     var minutes = Math.max(0, Math.floor(ms / 60000));
@@ -631,9 +646,21 @@
         cell.dataset.dateKey = key;
       }
 
+      // A worked day shows its hours in place of the dot rather than as well
+      // as it: three stacked things in a 44px box is the "overwhelming" the
+      // number was meant to avoid. Days with no record keep the dot, so the
+      // grid stays quiet exactly where there is nothing to read, and the ink
+      // lands only on days that have something to say.
+      //
+      // The figure is also a second channel for the colour: "6.5h" against an
+      // 8h target says short without anyone having to distinguish amber from
+      // emerald.
       cell.innerHTML =
         '<span class="cal-day-num">' + dayNum + '</span>' +
-        '<span class="cal-status-dot ' + tone + '"></span>';
+        (creditedMs > 0
+          ? '<span class="cal-day-hours ' + (creditedMs >= target ? 'met' : 'short') + '">' +
+            cellHours(creditedMs) + '</span>'
+          : '<span class="cal-status-dot ' + tone + '"></span>');
 
       // Stagger index for the reveal. Capped so a 31-day month finishes in
       // about a quarter of a second instead of trickling in.
