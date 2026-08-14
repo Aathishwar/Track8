@@ -41,6 +41,26 @@
     ENDED: 'status-finished'
   };
 
+  /**
+   * Caption above the dial's digits, naming what the digits are counting.
+   *
+   * Distinct from STATE_LABEL, which is the status pill's wording: the pill
+   * describes the user ("On lunch"), this describes the number ("Lunch").
+   */
+  var DIAL_LABEL = {
+    IDLE: 'On the clock',
+    WORKING: 'On the clock',
+    MEETING: 'In a meeting',
+    BREAK: 'Short break',
+    LUNCH: 'Lunch',
+    PAUSED: 'Paused',
+    ENDED: 'Day total'
+  };
+
+  // States where the digits count the current segment rather than the day.
+  // ENDED and IDLE are not here: there is no segment running.
+  var SEGMENT_STATES = { BREAK: true, LUNCH: true, MEETING: true, PAUSED: true };
+
   // Bottom-to-top order of the stacked week bars. Work sits at the bottom so
   // the goal line, measured from the baseline, lands on the credited portion.
   var STACK_ORDER = [
@@ -140,7 +160,7 @@
       'personDropdown', 'personList', 'openAddPersonModal', 'notifyBtn', 'notifyDot',
       'viewTimer', 'viewWeek', 'viewCalendar',
       'currentDayName', 'currentFullDate', 'statusPill', 'statusText',
-      'progressRingFill', 'timerDigits', 'timerAnnouncement',
+      'progressRingFill', 'timerCenter', 'timerLabel', 'timerDigits', 'dialChip', 'timerAnnouncement',
       'percentageBadge', 'breakDurationText', 'lunchDurationText', 'pausedDurationText',
       'breakBanner', 'breakBannerTitle', 'breakBannerMeta', 'breakBannerAction',
       'reminderStatus', 'meetingDurationText',
@@ -206,9 +226,13 @@
    * digits tick every second and are aria-hidden precisely so this can stay
    * quiet in between.
    */
-  function announce(state, creditedMs) {
+  function announce(state, creditedMs, openMs) {
     if (!el.timerAnnouncement) return;
-    var text = (STATE_LABEL[state] || 'Ready to start') + ', ' + hm(creditedMs) + ' of ' + hm(targetMs());
+    var text = (STATE_LABEL[state] || 'Ready to start') + ', ';
+    // Mirrors the dial: when the digits count a segment, say the segment first,
+    // then the day, so the spoken reading and the visible one agree.
+    if (SEGMENT_STATES[state]) text += hm(openMs) + ' so far, ';
+    text += hm(creditedMs) + ' of ' + hm(targetMs());
     if (text === lastAnnouncement) return;
     lastAnnouncement = text;
     el.timerAnnouncement.textContent = text;
@@ -237,6 +261,81 @@
     setTimeout(function () { node.classList.remove('celebrate'); }, 1000);
   }
 
+  // Which state the dial centre was last built for. The swap animation plays
+  // on a change of activity, not on the per-second tick that follows it.
+  var lastDialState = null;
+
+  /**
+   * The reminder limit and repeat interval for a resting state, or null when
+   * the state has no reminder attached to it.
+   */
+  function restLimits(state) {
+    var settings = Store.settings();
+    if (state === 'LUNCH') {
+      return { limit: settings.lunchAlertMinutes * 60000, repeat: settings.lunchRepeatMinutes * 60000 };
+    }
+    if (state === 'BREAK') {
+      return { limit: settings.breakAlertMinutes * 60000, repeat: settings.breakRepeatMinutes * 60000 };
+    }
+    return null;
+  }
+
+  /**
+   * The three things inside the ring: caption, digits, and the chip beside the
+   * percentage.
+   *
+   * On a break, at lunch, in a meeting or paused, the digits count that
+   * segment - which is the number the user actually wants then, and the reason
+   * this exists: it used to be legible only in the small banner below the
+   * dial. The percentage keeps its own meaning throughout, because the ring it
+   * annotates is always the day.
+   */
+  function renderDialCenter(summary) {
+    var state = summary.state;
+    var inSegment = SEGMENT_STATES[state] === true;
+
+    el.timerLabel.textContent = DIAL_LABEL[state] || DIAL_LABEL.IDLE;
+    el.timerDigits.textContent = hms(inSegment ? summary.openMs : summary.creditedMs);
+
+    // The chip is what the banner below used to spell out. Under the limit it
+    // is the countdown; over it, the overrun - so the dial alone answers "am I
+    // running long?" and the banner is free to appear only when the answer is
+    // yes.
+    var chip = '';
+    var over = false;
+    var limits = restLimits(state);
+
+    if (limits) {
+      if (summary.openMs < limits.limit) {
+        chip = 'reminder in ' + shortDuration(limits.limit - summary.openMs);
+      } else {
+        chip = shortDuration(summary.openMs - limits.limit) + ' over';
+        over = true;
+      }
+    } else if (state === 'MEETING') {
+      // Meetings are credited, so the day total is still moving; showing it
+      // here keeps the figure the digits gave up.
+      chip = hm(summary.creditedMs) + ' today';
+    } else if (state === 'PAUSED') {
+      chip = 'not counting';
+    }
+
+    el.dialChip.hidden = chip === '';
+    el.dialChip.textContent = chip;
+    el.dialChip.classList.toggle('over', over);
+
+    // Replay the swap only when the activity changed. renderTimer runs every
+    // second, and re-running it on each tick would leave the centre of the
+    // screen permanently animating.
+    if (state !== lastDialState) {
+      lastDialState = state;
+      el.timerCenter.classList.remove('swap');
+      // One layout read, once per state change, to restart the animation.
+      void el.timerCenter.offsetWidth;
+      el.timerCenter.classList.add('swap');
+    }
+  }
+
   /**
    * The per-second path. Touches text nodes and one stroke offset, nothing
    * more; no storage writes, no list rebuilds.
@@ -246,13 +345,8 @@
     var target = targetMs();
     var state = summary.state;
 
-    // The headline number is credited time: worked plus meetings. Meetings are
-    // work, so they move the ring and count against the daily target.
-    // The digits carry the logged total and the ring carries the target, so
-    // the "3h 12m / 8h 00m" line underneath was a third copy of both. Only the
-    // percentage survives; announce() still gives assistive tech the full
-    // "x of y" reading.
-    el.timerDigits.textContent = hms(summary.creditedMs);
+    renderDialCenter(summary);
+
     el.meetingDurationText.textContent = shortDuration(summary.meetingMs);
     el.breakDurationText.textContent = shortDuration(summary.breakMs);
     el.lunchDurationText.textContent = shortDuration(summary.lunchMs);
@@ -272,6 +366,11 @@
     el.progressRingFill.classList.toggle('complete', ratio >= 1);
     el.progressRingFill.classList.toggle('meeting', state === 'MEETING');
     el.progressRingFill.classList.toggle('resting', resting);
+    // Lunch and pause take their own colours rather than borrowing the break's
+    // amber, so the ring agrees with the caption inside it and with every other
+    // place the app paints these activities.
+    el.progressRingFill.classList.toggle('lunch', state === 'LUNCH');
+    el.progressRingFill.classList.toggle('paused', state === 'PAUSED');
 
     // The halo behind the ring is a static gradient, lit only while a shift is
     // actually running, and recoloured to match the stroke.
@@ -280,13 +379,15 @@
       ring.classList.toggle('lit', state !== 'IDLE');
       ring.classList.toggle('tone-meeting', state === 'MEETING');
       ring.classList.toggle('tone-resting', resting);
+      ring.classList.toggle('tone-lunch', state === 'LUNCH');
+      ring.classList.toggle('tone-paused', state === 'PAUSED');
       celebrateOnce(ring, ratio >= 1, day.dateKey);
     }
 
     el.statusPill.className = 'status-pill ' + (STATE_CLASS[state] || 'status-idle');
     el.statusText.textContent = STATE_LABEL[state] || 'Ready to start';
 
-    announce(state, summary.creditedMs);
+    announce(state, summary.creditedMs, summary.openMs);
     renderActions(state, TL.previousState(day) === TL.STATES.ENDED);
     renderBreakBanner(summary);
 
@@ -340,38 +441,33 @@
   }
 
   /**
-   * The break banner is the in-app half of the reminder. It states elapsed
-   * time and when the next nudge lands, so the rule is visible rather than
-   * something the user has to remember.
+   * The in-app half of the reminder, now shown only once the break has actually
+   * run long.
+   *
+   * It used to sit there for the whole break restating the elapsed time and the
+   * countdown. Both of those are in the dial now, where the eye already is, so
+   * a permanent banner was a second copy occupying the scarcest space on the
+   * one screen that has to fit without scrolling. Appearing only on the overrun
+   * also makes it mean something when it does appear. Ending a break never
+   * depended on it: "Back to work" is in the button grid in every resting
+   * state.
    */
   function renderBreakBanner(summary) {
     var resting = summary.state === 'BREAK' || summary.state === 'LUNCH';
-    el.breakBanner.hidden = !resting;
-    if (!resting) return;
+    var limits = resting ? restLimits(summary.state) : null;
+    var over = limits ? summary.openMs - limits.limit : -1;
 
-    var settings = Store.settings();
+    el.breakBanner.hidden = !limits || over < 0;
+    if (el.breakBanner.hidden) return;
+
     var isLunch = summary.state === 'LUNCH';
-    var limit = (isLunch ? settings.lunchAlertMinutes : settings.breakAlertMinutes) * 60000;
-    var repeat = (isLunch ? settings.lunchRepeatMinutes : settings.breakRepeatMinutes) * 60000;
-    var label = isLunch ? 'Lunch' : 'Short break';
-
-    el.breakBannerTitle.textContent = label + ' - ' + shortDuration(summary.openMs);
-    el.breakBanner.classList.toggle('over', summary.openMs >= limit);
+    el.breakBanner.classList.add('over');
     el.breakBannerAction.textContent = 'End ' + (isLunch ? 'lunch' : 'break');
+    el.breakBannerTitle.textContent = (isLunch ? 'Lunch' : 'Break') + ' running long';
 
-    // Kept to one line at 360px. The old wording spelled out "this time does
-    // not count towards your 8h 00m" on every render of a screen that has to
-    // fit without scrolling; the stat row above already labels this time as a
-    // break, and breaks never counting is the app's whole premise.
-    if (summary.openMs < limit) {
-      el.breakBannerMeta.textContent = 'Reminder in ' + shortDuration(limit - summary.openMs) +
-        ' · not counted';
-    } else {
-      var over = summary.openMs - limit;
-      var nextIn = repeat - (over % repeat);
-      el.breakBannerMeta.textContent = shortDuration(over) + ' over ' +
-        shortDuration(limit) + ' · next nudge in ' + shortDuration(nextIn);
-    }
+    var nextIn = limits.repeat - (over % limits.repeat);
+    el.breakBannerMeta.textContent = shortDuration(over) + ' over ' +
+      shortDuration(limits.limit) + ' · next nudge in ' + shortDuration(nextIn);
   }
 
   /**

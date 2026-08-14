@@ -685,8 +685,21 @@ body.modal-open {
   stroke: var(--activity-meeting);
 }
 
+/* One colour per activity, the same rule the stat row, the week bars and the
+   status pill follow. The three resting states used to share the break's amber,
+   which only became visibly wrong once the caption inside the ring started
+   naming the activity in its own colour: an amber ring under a purple "LUNCH"
+   contradicted itself. */
 .ring-fill.resting {
   stroke: var(--activity-break);
+}
+
+.ring-fill.lunch {
+  stroke: var(--activity-lunch);
+}
+
+.ring-fill.paused {
+  stroke: var(--activity-paused);
 }
 
 /* The glow tracks the ring's colour so the halo never contradicts the stroke. */
@@ -700,6 +713,16 @@ body.modal-open {
     transparent 72%, rgba(245, 158, 11, 0.20) 84%, transparent 97%);
 }
 
+.progress-ring-container.tone-lunch::before {
+  background: radial-gradient(circle at 50% 50%,
+    transparent 72%, rgba(168, 85, 247, 0.20) 84%, transparent 97%);
+}
+
+.progress-ring-container.tone-paused::before {
+  background: radial-gradient(circle at 50% 50%,
+    transparent 72%, rgba(100, 116, 139, 0.20) 84%, transparent 97%);
+}
+
 .timer-center-content {
   position: absolute;
   inset: 0;
@@ -710,12 +733,34 @@ body.modal-open {
   gap: 2px;
 }
 
+/* Plays once each time the activity changes, so switching to lunch reads as
+   the clock being handed over rather than the digits jumping. Transform and
+   opacity only, on one element, once per state change - not per tick: ui.js
+   gates it on the state actually differing. */
+.timer-center-content.swap {
+  animation: dial-swap 260ms var(--ease-out) both;
+}
+
+@keyframes dial-swap {
+  from { opacity: 0; transform: translateY(7px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
 .timer-label {
   font-size: 10px;
   letter-spacing: 1.4px;
   text-transform: uppercase;
   color: var(--text-muted);
+  transition: color var(--motion-base) ease;
 }
+
+/* The caption is decorative while it reads "On the clock" and load-bearing the
+   moment it names an activity: it is what tells you whether the digits are the
+   day or the break. So it takes the state's colour. */
+[data-state="BREAK"] .timer-label { color: var(--activity-break); }
+[data-state="LUNCH"] .timer-label { color: var(--activity-lunch); }
+[data-state="MEETING"] .timer-label { color: var(--activity-meeting); }
+[data-state="PAUSED"] .timer-label { color: var(--activity-paused); }
 
 .timer-digits {
   font-family: var(--font-mono);
@@ -745,6 +790,30 @@ body.modal-open {
 .percentage-badge.over {
   background: rgba(52, 211, 153, 0.2);
   color: var(--primary-emerald-light);
+}
+
+/* Sits beside the percentage and carries what the banner below used to say -
+   the reminder countdown, the overrun, or the day total while the digits are
+   busy with a meeting. Muted, because the digits above are the headline. */
+.dial-chip {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.dial-chip.over {
+  color: var(--amber-warning);
+  font-weight: 600;
+}
+
+/* On the narrowest phones the ring's interior cannot hold a percentage and a
+   chip side by side. The chip is the one that has a home elsewhere - the
+   banner appears on the overrun, and the stat row carries the totals - so it
+   is what gives way. */
+@media (max-width: 344px) {
+  .dial-chip {
+    display: none;
+  }
 }
 
 /* ------------------------------------------------------------ break banner */
@@ -2408,7 +2477,12 @@ input:focus {
    here removes a number the user cannot get elsewhere: the caption above the
    digits is decorative, and clock-in and clock-out live in the day details. */
 @media (max-height: 620px) {
-  .timer-label {
+  /* "On the clock" is decorative and goes. The activity captions stay: they
+     are what tells you whether the digits are the day's total or the break you
+     are currently on, and there is no room for that to be a guess. */
+  [data-state="IDLE"] .timer-label,
+  [data-state="WORKING"] .timer-label,
+  [data-state="ENDED"] .timer-label {
     display: none;
   }
 

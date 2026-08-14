@@ -117,8 +117,14 @@
                  a live region here made screen readers read the clock aloud
                  continuously for the whole shift. The announcement below is
                  updated only when the minute or the status actually changes. -->
-            <div class="timer-center-content" aria-hidden="true">
-              <span class="timer-label">On the clock</span>
+            <!-- The dial is the activity clock: on a break, at lunch, in a
+                 meeting or paused, the digits run that segment and the caption
+                 names it. Only the ring keeps a fixed meaning - it is always
+                 the day - because a scale that changed under you would make a
+                 half-full amber ring unreadable: half the day, or half the
+                 lunch? js/ui.js swaps all three in one animated step. -->
+            <div class="timer-center-content" id="timerCenter" aria-hidden="true">
+              <span class="timer-label" id="timerLabel">On the clock</span>
               <span class="timer-digits" id="timerDigits">00:00:00</span>
               <!-- The digits above are the logged total and the ring is the
                    target, so spelling out "3h 12m / 8h 00m" underneath said the
@@ -126,6 +132,9 @@
                    neither of the other two gives at a glance. -->
               <span class="target-progress-text">
                 <span class="percentage-badge" id="percentageBadge">0%</span>
+                <!-- Carries what the banner below used to say, so the rule is
+                     readable without leaving the dial. -->
+                <span class="dial-chip" id="dialChip" hidden></span>
               </span>
             </div>
             <p class="visually-hidden" id="timerAnnouncement" role="status" aria-live="polite"></p>
