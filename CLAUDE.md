@@ -72,12 +72,14 @@ reintroduces is invisible in testing and total in real use.
 | `js/store.js` | The persisted shape. The only module that touches `localStorage`. Validation, repair, v1→v2 migration. |
 | `js/xlsx.js` | `.xlsx` writer: store-only ZIP + CRC32 + SpreadsheetML. Generic; knows nothing about attendance. |
 | `js/report.js` | Builds the three worksheets from the event logs. |
+| `js/handoff.js` | The IndexedDB box the page and the worker share: taps the worker took, and a snapshot of the day for it to read. **Loaded in both scopes** — no DOM, no `localStorage`. |
+| `js/shift-card.js` | What the pinned notification says and which buttons it carries. **Loaded in both scopes**, because the worker redraws that same notification. |
 | `js/notify.js` | The on-device reminder layers, keep-alive audio, service-worker notification delivery. |
 | `js/push.js` | Subscribes this device to server-sent reminders. Fails soft on every path. |
 | `js/sync.js` | Account state, sign-in, and the background delta sync. Fails soft on every path. |
 | `js/ui.js` | All DOM writing. Nothing else in the codebase writes to the DOM. |
 | `js/app.js` | State machine, tick loop, event handlers. Deliberately thin. |
-| `sw.js` | Offline shell cache, **all** notification posting, action routing, and the push handler. |
+| `sw.js` | Offline shell cache, **all** notification posting, action routing, the push handler, and settling a break or lunch on its own with the app closed. |
 | `server/db.js` | Schema, pool, and `withAccount()` — where isolation is decided. Read it before touching a query. |
 | `server/auth.js` | Emailed codes, sessions, changing an address. |
 | `server/sync.js` | The one delta-exchange endpoint. |
@@ -85,7 +87,12 @@ reintroduces is invisible in testing and total in real use.
 | `server/mail.js` | Brevo HTTP API. Not SMTP — Render blocks those ports. |
 
 Load order in `index.html` matters — each module reads its dependencies off `window` at
-definition time.
+definition time. `js/handoff.js` and `js/shift-card.js` therefore come before `js/notify.js`,
+which reads `T8Shift` and `T8Handoff` as it defines itself.
+
+Those two are also pulled into `sw.js` with `importScripts`, so they run in a worker as well
+as a page: no DOM, no `localStorage`, no `T8Store`, and they close over
+`typeof window !== 'undefined' ? window : self` rather than assuming `window` exists.
 
 ## Rules that are easy to break
 
@@ -163,9 +170,17 @@ measured reads zero and the line stayed at the fallback. If you add or resize an
 between the wrapper's top edge and the bottom of a bar — the value caption, the label row,
 either gap — update `--bar-chrome` and `--bar-base-offset` with it.
 
-**Bump `CACHE` in `sw.js`** when shell files are added or removed, and add new `js/*.js` to
+**Bump `VERSION` in `sw.js`** when shell files are added or removed, and add new `js/*.js` to
 `SHELL`. The fetch handler is network-first with cache fallback, so an update lands on the
 next load, but the precache list still has to be right for offline.
+
+`VERSION` names the cache *and* is stamped onto the `importScripts` URLs, which is the half
+that is easy to miss. The two shared modules are stored beside the worker script in a cache of
+their own, not in `CACHE`, so a phone can keep drawing notifications from last week's
+`shift-card.js` while the page in front of the user runs this week's — the buttons on screen
+then depend on which copy happened to draw that card, which is unfalsifiable from the outside
+and cost an afternoon to pin down. Changing the URL forces the fetch instead of trusting the
+browser to diff bytes.
 
 **Animate `transform` and `opacity`, nothing else.** Those two are the only properties the
 compositor can run without waking the main thread. Anything animating height, width, top,

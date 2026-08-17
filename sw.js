@@ -13,7 +13,16 @@
  *      notification from the snapshot the page left there. See actInPlace.
  */
 
-var CACHE = 'track8-shell-v13';
+/* Bumped on every release that changes a shell file. It names the cache and it
+   is also stamped onto the imports below, which is the part that is easy to get
+   wrong: the two modules this worker shares with the page are stored beside the
+   worker script in a cache of their own, not the shell cache, and a phone can
+   therefore go on drawing notifications from last week's copy of shift-card.js
+   while the page in front of the user is running this week's. Changing the URL
+   guarantees a fresh fetch rather than trusting the browser to compare bytes. */
+var VERSION = 'v14';
+
+var CACHE = 'track8-shell-' + VERSION;
 
 var SHELL = [
   './',
@@ -45,7 +54,7 @@ var SHELL = [
    actions. Without these, every notification tap opens the app, exactly as it
    did before. */
 try {
-  importScripts('./js/handoff.js', './js/shift-card.js');
+  importScripts('./js/handoff.js?' + VERSION, './js/shift-card.js?' + VERSION);
 } catch (e) {
   console.warn('Track8 SW: shared modules unavailable, notification taps will open the app.', e);
 }
