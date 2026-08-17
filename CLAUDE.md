@@ -233,6 +233,62 @@ in the title, which is why the pinned notification says "back by 14:35" up there
 carries the elapsed time. Do not add markup to a body expecting it to render; it prints
 verbatim.
 
+**Two notification actions, never three, and never a destructive one beside a routine one.**
+`ACTIONS` in `shift-card.js`. Android lays actions out as one row and sizes each button to its
+own label, so three on a phone leaves each about a thumb's width and they get mis-hit — a tap
+meant for Break landed on Lunch, which is why Pause is not on that card. Worse, End day used
+to sit next to "Back on the clock" on the paused card, so a miss closed the whole day instead
+of resuming it; end-day is still reachable without unlocking, through the media card's `stop`,
+where nothing benign is adjacent. There is also **no way to control the layout** — no widths,
+no alignment, no even split. Desktop Chrome stretches two actions across the card and Android
+packs them left as content-sized chips. The only lever is how many buttons and what they say,
+so keep paired labels the same length.
+
+**`postMessage` to a window client is not proof of delivery.** Android goes on listing a window
+client after it has discarded the page behind it, so the message vanishes and `focus()` reloads
+the app at a plain URL with the tap forgotten. That is why "End break" did nothing half an hour
+into a break while "Break" worked seconds after using the app — one reached a live page, the
+other a ghost. `deliver()` in `sw.js` hands the page a `MessageChannel` port and reads silence
+as "no page there", then reloads that window at `?a=…` so the boot path finishes the job. The
+page must answer on that port **before** running the action (`listenForServiceWorkerMessages`
+in `notify.js`), or a slow save reads as a dead page and costs the user a reload.
+
+**`LAUNCH_ACTIONS` in `app.js` must not toggle.** It used to mean "start a break, or end it if
+one is running", which was fine when only a cold launch reached it. It is now also the
+worker's fallback when a page did not answer, and a page that answers late has already run the
+action — a toggle would undo it. Every entry refuses a state it does not apply to, so arriving
+twice is a no-op. The lock-screen media buttons still toggle, because there is one of each and
+"what does Break do while I am on a break?" has to be "ends it".
+
+**The worker settles break and lunch itself; everything else opens the app.** `IN_PLACE` in
+`sw.js`. It cannot write the day — the event log is in the page's `localStorage` — so it
+records the tap in `js/handoff.js` with the moment it happened and the app files it on its next
+run. Filing it late is lossless *only* because durations are subtracted from timestamps; the
+one invariant at the top of this file is what makes the whole feature possible. Pause, end day
+and meetings deliberately stay app-only.
+
+**The handoff snapshot stores banked credited time, not credited-time-as-of-now.**
+`creditedBeforeMs` excludes the segment that is still open, and `T8Shift.creditedAt(snap, now)`
+adds it back at draw time. Storing the live total instead means the open stretch is added a
+second time — the first build of this showed 97 minutes when the truth was 79. It is written on
+transitions only, never per tick: an IndexedDB write a second is the same battery bug as
+`Store.save()` in a render function. Transition-time is sufficient because credited time is
+frozen for the whole of a break, which is exactly when the worker reads it. A day that is idle
+or `ENDED` has its snapshot **cleared**, or the worker keeps offering to end a break that
+finished yesterday.
+
+**A queued tap belongs to the day of its own timestamp, not to today.** `fileHandoffEntry()`
+routes by `TL.dateKeyOf(entry.t)`, so a break ended at 23:58 and filed the next morning closes
+yesterday's break instead of opening a hole in today. Entries are dropped whether or not they
+applied — a tap that does not fit the log never will, and keeping it replays the same refusal
+on every launch.
+
+**The header theme button is light ↔ dark only.** "Match phone" is still a choice in
+Appearance and `applyTheme` still honours it, but `nextTheme()` does not stop there: a
+three-way cycle on a one-tap glance control means the tap meant to darken the screen lands on
+the OS setting, which on a phone already set to dark looks like the button did nothing. From
+`system` it flips away from whatever the phone is currently showing.
+
 **The lock-screen card rides on the keep-alive track.** There is no web API for a lock-screen
 widget. What there is is the Media Session API, which describes *playing audio* to the OS —
 so the card exists only while the silent track is playing, and `lockScreenControls` therefore

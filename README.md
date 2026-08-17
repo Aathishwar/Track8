@@ -41,13 +41,35 @@ Nothing running on the phone can be relied on to wake a sleeping phone, so this 
 
 **0. Sent from the server — the reliable one.** When the app is deployed with the push server, your break deadline is held server-side and the reminder is sent to your phone at the right moment. Nothing of the app's has to still be running, so no battery manager can interfere. This is the layer that actually solves the problem; the three below it are what you get without a server.
 
-**1. Pinned notification — always works.** The moment a break starts, a notification appears and stays in your notification shade for the whole break. It states the time you are due back and carries an **End break** button, so you can clock back in from the lock screen without opening the app.
+**1. Pinned notification — always works.** The moment a break starts, a notification appears and stays in your notification shade for the whole break. It states the time you are due back and carries an **End break** button.
 
 **2. Live nudges — usually works on Android.** At 15 minutes, then every 5, with sound and vibration. This needs the app's timer to survive the screen going off, which Android only allows for pages playing audio — so the app plays a silent track for the length of the break. You can turn this off in Settings if you would rather save the battery. iPhones suspend it regardless.
 
 **3. Catch-up — cannot fail.** Whenever you open the app it works out the true elapsed time from timestamps and tells you immediately: *"You have been on break for 34 minutes."*
 
 The app notices when your phone kills layer 2 and says so, rather than letting a late reminder look like an unreliable app. With layer 0 running, none of that matters and Settings says so.
+
+---
+
+## Breaks and lunch, straight from the notification
+
+On Android you never have to open the app to take a break or come back from one. The pinned notification carries the buttons and the tap is handled in the background — no window appears, nothing to unlock, nothing to wait for.
+
+| What the shade shows | What it offers |
+|---|---|
+| ⏱️ On the clock | **☕ Break** · **🍱 Lunch** |
+| ☕ Break · back by 14:35 | **End break** |
+| 🍱 Lunch · back by 13:15 | **End lunch** |
+| 👥 In a meeting | **☕ Break** · **🍱 Lunch** |
+| ⏸️ Paused | **▶ Back on the clock** |
+
+The card rewrites itself under your thumb, so it always says where you actually are.
+
+**Pause, ending the day and logging a meeting open the app on purpose.** A meeting needs a length, and a notification has nowhere to ask for one. Ending the day is the one thing you should not be able to do by mis-tapping something next to it — that used to sit beside "Back on the clock" and a miss closed the whole day. From the lock screen it is still one press of the media card's stop button.
+
+**Your hours stay exact even though the app was closed.** The tap is recorded with the moment it happened, and written into your day whenever you next open Track8. A break you ended at 14:32 is a break that ended at 14:32, whether the app caught up at 14:33 or at six in the evening. The whole app works by subtracting timestamps rather than counting seconds, which is what makes that safe.
+
+**One caveat, and it is Android-only.** iPhones ignore notification buttons entirely — iOS web push shows the title and body and nothing else, so on an iPhone tapping the notification opens the app and you clock back in from there.
 
 ---
 
@@ -184,6 +206,8 @@ Without the server, `python -m http.server 8123` still works for the static app 
 
 After you publish an update, the app may need one extra refresh to pick it up.
 
+On Android, an installed Track8 that is only backgrounded can keep running the old background worker, so a notification may still show yesterday's buttons after you have refreshed the app itself. Swipe Track8 fully out of recents, reopen it, and start and end one break to redraw the pinned card. Android's **Clear cache** is safe if it is still stuck; **Clear data** or **Clear storage** is not — that erases your hours. Take a backup first.
+
 ---
 
 ## Files
@@ -192,7 +216,8 @@ After you publish an update, the app may need one extra refresh to pick it up.
 index.html               markup, modals, sign-in screen
 styles.css               design system, mobile-first, safe-area aware
 manifest.webmanifest     home-screen install metadata
-sw.js                    offline cache, notification delivery, push handler
+sw.js                    offline cache, notification delivery, push handler,
+                         and break/lunch handled without opening the app
 icons/                   generated app icons
 render.yaml              deployment blueprint
 
@@ -200,6 +225,8 @@ js/timeline.js           event log to durations. Pure, no DOM, no storage
 js/store.js              persisted shape, validation, v1 migration
 js/xlsx.js               .xlsx writer: store-only ZIP + CRC32 + SpreadsheetML
 js/report.js             the three worksheets, built from the event logs
+js/handoff.js            the box the page and the service worker share
+js/shift-card.js         what the pinned notification says and offers
 js/notify.js             the on-device reminder layers
 js/push.js               subscribes this device to server-sent reminders
 js/sync.js               account, sign-in, and background sync
