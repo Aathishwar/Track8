@@ -30,7 +30,7 @@
       <div class="header-brand">
         <!-- Same mark as the app icon: the progress ring closing around the
              8-hour goal. Kept in sync with icons/*.png by hand. -->
-        <span class="logo-icon" aria-hidden="true">
+        <span class="logo-icon" id="brandLogo" aria-hidden="true">
           <svg width="21" height="21" viewBox="0 0 24 24" fill="none">
             <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.4" opacity="0.3"></circle>
             <circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"
@@ -111,6 +111,15 @@
             <svg class="progress-ring" width="220" height="220" viewBox="0 0 220 220" aria-hidden="true">
               <circle class="ring-bg" cx="110" cy="110" r="92" stroke-width="12"></circle>
               <circle class="ring-fill" id="progressRingFill" cx="110" cy="110" r="92" stroke-width="12"></circle>
+              <!-- The break's own arc, inside the day's.
+                   The outer ring keeps its fixed meaning - it is always the day
+                   - because a scale that changed under you would make a
+                   half-full amber ring unreadable. This one is the break: it
+                   starts empty the moment the break begins and closes as the
+                   allowance runs out, so "how long have I been gone?" is a
+                   shape rather than a number to read. -->
+              <circle class="rest-track" id="restTrack" cx="110" cy="110" r="80" stroke-width="6" hidden></circle>
+              <circle class="rest-fill" id="restFill" cx="110" cy="110" r="80" stroke-width="6" hidden></circle>
             </svg>
 
             <!-- Hidden from assistive tech: the digits change every second, and
@@ -124,7 +133,25 @@
                  half-full amber ring unreadable: half the day, or half the
                  lunch? js/ui.js swaps all three in one animated step. -->
             <div class="timer-center-content" id="timerCenter" aria-hidden="true">
-              <span class="timer-label" id="timerLabel">On the clock</span>
+              <!-- The hourglass sits on the caption line rather than getting a
+                   row of its own: the timer view has to fit the viewport in
+                   every state, and there was no spare row to spend. Its sand
+                   is the day, not the current segment, so it agrees with the
+                   ring around it whichever way the digits are reading. -->
+              <span class="dial-caption">
+                <svg class="hourglass" id="dialHourglass" viewBox="0 0 12 18" width="9" height="13" aria-hidden="true">
+                  <g class="hg-sand">
+                    <path class="hg-sand-top" d="M3.2 2.9h5.6c0 2.7-2.8 4.4-2.8 5.5 0-1.1-2.8-2.8-2.8-5.5z"></path>
+                    <path class="hg-sand-bottom" d="M6 10.1c0 1.1 2.9 2.7 2.9 5.1H3.1c0-2.4 2.9-4 2.9-5.1z"></path>
+                  </g>
+                  <g fill="none" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2.2 1.4h7.6M2.2 16.6h7.6"></path>
+                    <path d="M3 1.4c0 3.7 3 5.2 3 7.6 0 2.4-3 3.9-3 7.6"></path>
+                    <path d="M9 1.4c0 3.7-3 5.2-3 7.6 0 2.4 3 3.9 3 7.6"></path>
+                  </g>
+                </svg>
+                <span class="timer-label" id="timerLabel">On the clock</span>
+              </span>
               <span class="timer-digits" id="timerDigits">00:00:00</span>
               <!-- The digits above are the logged total and the ring is the
                    target, so spelling out "3h 12m / 8h 00m" underneath said the
@@ -137,6 +164,14 @@
                 <span class="dial-chip" id="dialChip" hidden></span>
               </span>
             </div>
+            <!-- The whole dial is the toggle between "hours in" and "hours
+                 left". A real button rather than a click handler on the ring:
+                 the dial's own contents are aria-hidden because the digits
+                 change every second, so this is the only thing here a screen
+                 reader can be given. -->
+            <button type="button" class="dial-tap" id="dialToggle" aria-pressed="false"
+                    aria-label="Dial shows hours worked. Tap to show hours left."></button>
+
             <p class="visually-hidden" id="timerAnnouncement" role="status" aria-live="polite"></p>
           </div>
 
@@ -280,13 +315,22 @@
           <!-- Appears only once you have navigated away from the current week,
                so getting back is one tap instead of counting arrow presses. -->
           <button type="button" class="return-chip" id="thisWeekBtn" hidden>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="11 17 6 12 11 7"></polyline>
-              <polyline points="18 17 13 12 18 7"></polyline>
-            </svg>
             Back to this week
+            <!-- Points forward, and sits on the right. You only ever see this
+                 after paging *backwards*, so returning to now is a jump
+                 forward in time, and an arrow aimed back at where you already
+                 are is the wrong picture. -->
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="13 17 18 12 13 7"></polyline>
+              <polyline points="6 17 11 12 6 7"></polyline>
+            </svg>
           </button>
 
+          <!-- Fixed track height, deliberately. The chart used to grow into
+               whatever the card was not using, which meant the goal line had to
+               be placed by arithmetic against a track nobody could measure
+               before first paint. A track that is always 140px needs none of
+               that, and a week reads the same on every screen. -->
           <div class="histogram-wrapper">
             <div class="target-line-indicator">
               <span class="target-label">8h</span>
@@ -305,6 +349,12 @@
           </div>
 
           <p class="chart-note">Work and meetings count towards your goal, so the dashed line sits on top of them. Breaks and lunch stack above it.</p>
+
+          <!-- Where the week actually went. The bars above answer "which days
+               were short"; this answers "out of all the time I logged, how much
+               was work" - which a stack cannot, because nobody adds seven of
+               them up in their head. -->
+          <div class="donut-block" id="weekDonut"></div>
 
           <div class="summary-grid">
             <div class="summary-cell">
@@ -340,11 +390,11 @@
           </div>
 
           <button type="button" class="return-chip" id="thisMonthBtn" hidden>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <polyline points="11 17 6 12 11 7"></polyline>
-              <polyline points="18 17 13 12 18 7"></polyline>
-            </svg>
             Back to this month
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polyline points="13 17 18 12 13 7"></polyline>
+              <polyline points="6 17 11 12 6 7"></polyline>
+            </svg>
           </button>
 
           <!-- The first two show a sample figure rather than a dot, because
@@ -414,6 +464,39 @@
     </nav>
 
     <!-- =========================== MODALS =========================== -->
+
+    <!-- First run only. Three numbers, asked once, so nobody has to find
+         Settings on day one to discover their lunch is set to somebody else's
+         30 minutes. Everything here lives in Settings > Timers afterwards, and
+         "Use the defaults" is a first-class answer. -->
+    <div class="modal-overlay" id="setupModal" hidden>
+      <div class="modal-card glass-panel" role="dialog" aria-modal="true" aria-labelledby="setupTitle">
+        <div class="modal-header">
+          <h2 id="setupTitle">Set your timers</h2>
+        </div>
+        <p class="setup-intro">Three numbers and you are done. All of them live in Settings afterwards.</p>
+
+        <div class="setting-block">
+          <div class="setting-row">
+            <label for="setupTarget">Hours a day</label>
+            <span class="input-with-unit"><input type="number" id="setupTarget" min="0.5" max="24" step="0.25" inputmode="decimal" value="8"><span>hours</span></span>
+          </div>
+          <div class="setting-row">
+            <label for="setupBreak"><span class="swatch swatch-break" aria-hidden="true"></span>Remind me after a break of</label>
+            <span class="input-with-unit"><input type="number" id="setupBreak" min="1" max="180" step="1" inputmode="numeric" value="15"><span>min</span></span>
+          </div>
+          <div class="setting-row">
+            <label for="setupLunch"><span class="swatch swatch-lunch" aria-hidden="true"></span>And after a lunch of</label>
+            <span class="input-with-unit"><input type="number" id="setupLunch" min="1" max="240" step="1" inputmode="numeric" value="30"><span>min</span></span>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" class="btn btn-secondary" id="setupSkipBtn">Use the defaults</button>
+          <button type="button" class="btn btn-primary" id="setupSaveBtn">Save and start</button>
+        </div>
+      </div>
+    </div>
 
     <div class="modal-overlay" id="addPersonModal" hidden>
       <div class="modal-card glass-panel" role="dialog" aria-modal="true" aria-labelledby="addPersonTitle">
@@ -516,7 +599,11 @@
              without opening anything. app.js keeps one group open at a time. -->
         <div class="settings-body" id="settingsBody">
 
-          <section class="settings-group open" data-group="reminders">
+          <!-- Nothing is expanded on open. Every header quotes its own current
+               values, so the closed accordion already answers "what is this set
+               to?" - and landing on a wall of open reminder fields made the
+               screen look like a form to fill in rather than a list to browse. -->
+          <section class="settings-group" data-group="reminders">
             <button type="button" class="settings-group-header" aria-expanded="true" aria-controls="groupReminders">
               <span class="settings-group-icon" aria-hidden="true">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -558,32 +645,6 @@
               </div>
 
               <div class="setting-block">
-                <span class="setting-block-title"><span class="swatch swatch-break" aria-hidden="true"></span>Short break</span>
-                <p class="setting-block-note">Nudge you once the break runs long, then keep nudging until you clock back in.</p>
-                <div class="setting-row">
-                  <label for="setBreakAlert">Remind after</label>
-                  <span class="input-with-unit"><input type="number" id="setBreakAlert" min="1" max="180" step="1" inputmode="numeric"><span>min</span></span>
-                </div>
-                <div class="setting-row">
-                  <label for="setBreakRepeat">Then repeat every</label>
-                  <span class="input-with-unit"><input type="number" id="setBreakRepeat" min="1" max="60" step="1" inputmode="numeric"><span>min</span></span>
-                </div>
-              </div>
-
-              <div class="setting-block">
-                <span class="setting-block-title"><span class="swatch swatch-lunch" aria-hidden="true"></span>Lunch</span>
-                <p class="setting-block-note">Same rule, longer leash.</p>
-                <div class="setting-row">
-                  <label for="setLunchAlert">Remind after</label>
-                  <span class="input-with-unit"><input type="number" id="setLunchAlert" min="1" max="240" step="1" inputmode="numeric"><span>min</span></span>
-                </div>
-                <div class="setting-row">
-                  <label for="setLunchRepeat">Then repeat every</label>
-                  <span class="input-with-unit"><input type="number" id="setLunchRepeat" min="1" max="60" step="1" inputmode="numeric"><span>min</span></span>
-                </div>
-              </div>
-
-              <div class="setting-block">
                 <span class="setting-block-title">How you are alerted</span>
 
                 <!-- Which layer is actually protecting this phone. Filled by
@@ -596,6 +657,14 @@
                   <span>
                     <strong>Keep reminding with the screen off</strong>
                     <small>Plays a silent track so the phone lets our timer keep running. Turn off to save battery — you will still get the pinned notification and a reminder when you next open the app.</small>
+                  </span>
+                </label>
+
+                <label class="switch-row">
+                  <input type="checkbox" id="setLockScreen">
+                  <span>
+                    <strong>Lock screen controls</strong>
+                    <small>Puts Track8 on the lock screen like a music player: what is running, how the day stands, and buttons for break, lunch, pause and end day. Needs the setting above, since it is the silent track the phone draws the card for.</small>
                   </span>
                 </label>
 
@@ -623,28 +692,129 @@
             </div>
           </section>
 
-          <section class="settings-group" data-group="workday">
-            <button type="button" class="settings-group-header" aria-expanded="false" aria-controls="groupWorkday">
+
+          <!-- The reminders that are not about a break running long. Their own
+               group because they are the ones people either love or switch off,
+               and burying them under Reminders would have made that accordion
+               the longest thing in the app. -->
+
+          <!-- Every duration in the app, in one place. They used to be spread
+               over three groups - the daily target in "Work day", break and
+               lunch under "Reminders", the rest in "Nudges" - so answering
+               "how long is my lunch?" meant opening the right one of three.
+               Reminders keeps only the delivery: permission, sound, vibration. -->
+          <section class="settings-group" data-group="timers">
+            <button type="button" class="settings-group-header" aria-expanded="false" aria-controls="groupTimers">
               <span class="settings-group-icon" aria-hidden="true">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline>
+                  <circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15 14"></polyline>
                 </svg>
               </span>
               <span class="settings-group-text">
-                <span class="settings-group-title">Work day</span>
-                <span class="settings-group-summary" id="sumWorkday"></span>
+                <span class="settings-group-title">Timers</span>
+                <span class="settings-group-summary" id="sumTimers"></span>
               </span>
               <svg class="settings-group-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
                 <polyline points="6 9 12 15 18 9"></polyline>
               </svg>
             </button>
-            <div class="settings-group-body" id="groupWorkday">
+            <div class="settings-group-body" id="groupTimers">
               <div class="setting-block">
                 <div class="setting-row">
                   <label for="setDailyTarget">Daily target</label>
                   <span class="input-with-unit"><input type="number" id="setDailyTarget" min="0.5" max="24" step="0.25" inputmode="decimal"><span>hours</span></span>
                 </div>
                 <p class="setting-block-note">Meetings count towards this. Breaks, lunch and paused time never do.</p>
+              </div>
+              <div class="setting-block">
+                <span class="setting-block-title"><span class="swatch swatch-break" aria-hidden="true"></span>Short break</span>
+                <p class="setting-block-note">Nudge you once the break runs long, then keep nudging until you clock back in.</p>
+                <div class="setting-row">
+                  <label for="setBreakAlert">Remind after</label>
+                  <span class="input-with-unit"><input type="number" id="setBreakAlert" min="1" max="180" step="1" inputmode="numeric"><span>min</span></span>
+                </div>
+                <div class="setting-row">
+                  <label for="setBreakRepeat">Then repeat every</label>
+                  <span class="input-with-unit"><input type="number" id="setBreakRepeat" min="1" max="60" step="1" inputmode="numeric"><span>min</span></span>
+                </div>
+              </div>
+
+              <div class="setting-block">
+                <span class="setting-block-title"><span class="swatch swatch-lunch" aria-hidden="true"></span>Lunch</span>
+                <p class="setting-block-note">Same rule, longer leash.</p>
+                <div class="setting-row">
+                  <label for="setLunchAlert">Remind after</label>
+                  <span class="input-with-unit"><input type="number" id="setLunchAlert" min="1" max="240" step="1" inputmode="numeric"><span>min</span></span>
+                </div>
+                <div class="setting-row">
+                  <label for="setLunchRepeat">Then repeat every</label>
+                  <span class="input-with-unit"><input type="number" id="setLunchRepeat" min="1" max="60" step="1" inputmode="numeric"><span>min</span></span>
+                </div>
+              </div>
+
+              <div class="setting-block">
+                <div class="setting-row">
+                  <label for="setStretchAlert">Sat down too long</label>
+                  <span class="input-with-unit"><input type="number" id="setStretchAlert" min="0" max="480" step="5" inputmode="numeric"><span>min</span></span>
+                </div>
+                <div class="setting-row">
+                  <label for="setStretchRepeat">Then remind me every</label>
+                  <span class="input-with-unit"><input type="number" id="setStretchRepeat" min="1" max="240" step="5" inputmode="numeric"><span>min</span></span>
+                </div>
+                <p class="setting-block-note">Desk time with no break at all. Set it to 0 to turn it off.</p>
+              </div>
+
+              <div class="setting-block">
+                <div class="setting-row">
+                  <label for="setPauseAlert">Paused too long</label>
+                  <span class="input-with-unit"><input type="number" id="setPauseAlert" min="0" max="240" step="5" inputmode="numeric"><span>min</span></span>
+                </div>
+                <div class="setting-row">
+                  <label for="setMeetingAlert">Meeting running long</label>
+                  <span class="input-with-unit"><input type="number" id="setMeetingAlert" min="0" max="480" step="5" inputmode="numeric"><span>min</span></span>
+                </div>
+                <p class="setting-block-note">Paused time is not counted; meeting time is. Both nag again every half hour.</p>
+              </div>
+
+              <div class="setting-block">
+                <label class="switch-row">
+                  <input type="checkbox" id="setOvertimeReminder">
+                  <span>
+                    <strong>Tell me when I hit my target</strong>
+                    <small>One nudge the moment the day's hours are done, then every half hour you keep going.</small>
+                  </span>
+                </label>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-group" data-group="appearance">
+            <button type="button" class="settings-group-header" aria-expanded="false" aria-controls="groupAppearance">
+              <span class="settings-group-icon" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="5"></circle>
+                  <path d="M12 1v2M12 21v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M1 12h2M21 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path>
+                </svg>
+              </span>
+              <span class="settings-group-text">
+                <span class="settings-group-title">Appearance</span>
+                <span class="settings-group-summary" id="sumAppearance"></span>
+              </span>
+              <svg class="settings-group-chevron" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <div class="settings-group-body" id="groupAppearance">
+              <div class="setting-block">
+                <!-- Three real choices, not a two-way switch: "follow the
+                     phone" is the one most people want and the only one that
+                     changes by itself at sunset. -->
+                <div class="theme-choice" role="radiogroup" aria-label="Theme">
+                  <button type="button" class="theme-option" data-theme-choice="system">Match phone</button>
+                  <button type="button" class="theme-option" data-theme-choice="light">Light</button>
+                  <button type="button" class="theme-option" data-theme-choice="dark">Dark</button>
+                </div>
+                <p class="setting-block-note">Light is its own palette, not the dark one inverted — the accent darkens so it still carries text on white.</p>
               </div>
             </div>
           </section>
@@ -786,6 +956,8 @@
           </section>
         </div>
 
+        <button type="button" class="btn btn-secondary full" id="replayTourBtn">Show the walkthrough</button>
+
         <!-- Only rendered while the sheet is scoped to one group, so the bell
              is not a dead end. -->
         <button type="button" class="btn btn-secondary settings-all-link" id="showAllSettingsBtn" hidden>All settings</button>
@@ -854,6 +1026,22 @@
       </div>
     </div>
 
+    <!-- First-run walkthrough. The spotlight is positioned over real controls
+         rather than over a picture of them, so nothing here has to be kept in
+         sync with the layout, and it works at any screen size. -->
+    <div class="tour-overlay" id="tourOverlay" hidden>
+      <div class="tour-spotlight" id="tourSpotlight" aria-hidden="true"></div>
+      <div class="tour-card glass-panel" id="tourCard" role="dialog" aria-modal="true" aria-labelledby="tourTitle">
+        <p class="tour-count" id="tourCount"></p>
+        <h2 class="tour-title" id="tourTitle"></h2>
+        <p class="tour-text" id="tourText"></p>
+        <div class="tour-actions">
+          <button type="button" class="btn-link" id="tourSkipBtn">Skip</button>
+          <button type="button" class="btn btn-primary btn-small" id="tourNextBtn">Next</button>
+        </div>
+      </div>
+    </div>
+
     <div class="toast" id="toastHost" role="status" aria-live="polite"></div>
   </div>
 
@@ -861,6 +1049,9 @@
   <script src="./js/store.js"></script>
   <script src="./js/xlsx.js"></script>
   <script src="./js/report.js"></script>
+  <script src="./js/quips-english.js"></script>
+  <script src="./js/quips-tanglish.js"></script>
+  <script src="./js/quips.js"></script>
   <script src="./js/notify.js"></script>
   <script src="./js/push.js"></script>
   <script src="./js/sync.js"></script>

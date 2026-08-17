@@ -189,7 +189,13 @@
     return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
   }
 
-  function startKeepAlive(label) {
+  /**
+   * @param fresh  True when a new segment is starting. Only then is the
+   *   "the phone killed us" flag cleared - the lock-screen controls re-arm this
+   *   track on every tick, and clearing the flag there would wipe the evidence
+   *   before onBecameVisible ever got to read it.
+   */
+  function startKeepAlive(fresh) {
     if (!global.T8Store.settings().keepAliveEnabled) return;
 
     if (!keepAliveEl) {
@@ -217,29 +223,20 @@
       });
     }
 
-    keepAliveInterrupted = false;
+    if (fresh) keepAliveInterrupted = false;
     stoppingOnPurpose = false;
 
-    var play = keepAliveEl.play();
-    if (play && play.catch) {
-      play.catch(function (e) {
-        // Autoplay policy blocks this unless a gesture started it. Break and
-        // lunch are always begun by a tap, so this should not normally fire.
-        console.info('Track8: background keep-alive could not start; falling back to catch-up reminders.', e);
-      });
-    }
-
-    if ('mediaSession' in navigator && global.MediaMetadata) {
-      try {
-        navigator.mediaSession.metadata = new MediaMetadata({
-          title: label || 'Break running',
-          artist: 'Track8 - reminder active',
-          album: 'Attendance'
+    // play() on an already-playing element resolves without doing anything, so
+    // this is safe to call every tick.
+    if (keepAliveEl.paused) {
+      var play = keepAliveEl.play();
+      if (play && play.catch) {
+        play.catch(function (e) {
+          // Autoplay policy blocks this unless a gesture started it. Break and
+          // lunch are always begun by a tap, so this should not normally fire.
+          console.info('Track8: background keep-alive could not start; falling back to catch-up reminders.', e);
         });
-        navigator.mediaSession.setActionHandler('pause', function () {
-          if (callbacks.onResumeRequest) callbacks.onResumeRequest();
-        });
-      } catch (e) { /* metadata is cosmetic */ }
+      }
     }
   }
 
@@ -254,14 +251,181 @@
       keepAliveEl.currentTime = 0;
     } catch (e) { /* already stopped */ }
     keepAliveInterrupted = false;
-    if ('mediaSession' in navigator) {
-      try { navigator.mediaSession.metadata = null; } catch (e) { /* ignore */ }
-    }
+    clearMedia();
   }
 
   /** True when the silent track is actually playing, i.e. layer 2 is live. */
   function keepAliveActive() {
     return !!(keepAliveEl && !keepAliveEl.paused);
+  }
+
+  /* ---------------------------------------------------------- lock screen */
+
+  /**
+   * The lock-screen card, the way a music app gets one.
+   *
+   * There is no web API for "put a widget on the lock screen". What there is
+   * is the Media Session API: a page that is playing audio can describe that
+   * audio to the OS and claim the transport buttons, and Android then draws it
+   * the same card it draws for Spotify - artwork, two lines of text, a
+   * progress bar, and up to five controls. So the card is real, but it rides
+   * on the silent keep-alive track: no track playing, no card. That is also
+   * why this cannot be a settings-only feature - turning the card on means
+   * holding audio focus for the whole shift.
+   *
+   * The buttons the OS offers are a fixed vocabulary, so the app's actions are
+   * mapped onto the nearest transport meaning rather than invented:
+   *
+   *   play / pause   clock in, or pause and resume the clock
+   *   previous       start a break, or end the one that is running
+   *   next           start lunch, or end the lunch that is running
+   *   stop           end the day
+   *
+   * Everything the timer screen can do, in other words, except logging a
+   * meeting - which needs a length, and a lock screen has nowhere to ask.
+   */
+  var MEDIA_TITLES = {
+    WORKING: '⏱️ On the clock',
+    MEETING: '👥 In a meeting',
+    BREAK: '☕ On a break',
+    LUNCH: '🍱 At lunch',
+    PAUSED: '⏸️ Paused'
+  };
+
+  var lastMediaKey = '';
+  var mediaWired = false;
+
+  function mediaSupported() {
+    return typeof navigator !== 'undefined' && 'mediaSession' in navigator && !!global.MediaMetadata;
+  }
+
+  function lockScreenEnabled() {
+    var s = global.T8Store.settings();
+    return !!(s.lockScreenControls && s.keepAliveEnabled);
+  }
+
+  var MEDIA_ACTIONS = [
+    ['play', 'onPlayRequest'],
+    ['pause', 'onPauseRequest'],
+    ['previoustrack', 'onBreakRequest'],
+    ['nexttrack', 'onLunchRequest'],
+    ['stop', 'onEndDayRequest']
+  ];
+
+  /**
+   * Claimed once, not per update. A handler that is set again on every tick
+   * costs a browser round trip a second for no change, and dropping one to
+   * null mid-session makes Android redraw the card with a missing button.
+   */
+  function wireMediaActions() {
+    if (mediaWired || !mediaSupported()) return;
+    MEDIA_ACTIONS.forEach(function (pair) {
+      try {
+        navigator.mediaSession.setActionHandler(pair[0], function () {
+          var fn = callbacks[pair[1]];
+          if (fn) fn();
+        });
+      } catch (e) { /* an action this browser does not know is not an error */ }
+    });
+    mediaWired = true;
+  }
+
+  function clearMedia() {
+    if (!mediaSupported()) return;
+    lastMediaKey = '';
+    try {
+      navigator.mediaSession.metadata = null;
+      navigator.mediaSession.playbackState = 'none';
+    } catch (e) { /* cosmetic */ }
+  }
+
+  /** Second line of the card: how the day stands, in the same words as the app. */
+  function mediaSubtitle(summary, targetMs) {
+    var counted = shortMs(summary.creditedMs);
+    if (targetMs > 0 && summary.creditedMs < targetMs) {
+      return counted + ' counted · ' + shortMs(targetMs - summary.creditedMs) + ' to go';
+    }
+    if (targetMs > 0) return counted + ' counted · target met';
+    return counted + ' counted';
+  }
+
+  function shortMs(ms) {
+    var mins = Math.max(0, Math.round(ms / 60000));
+    var h = Math.floor(mins / 60);
+    return h > 0 ? h + 'h ' + (mins % 60) + 'm' : mins + 'm';
+  }
+
+  /**
+   * Push the current state to the OS.
+   *
+   * Cheap to call every second: the text only changes on the minute, and
+   * everything below is skipped unless it actually differs.
+   */
+  function updateMedia(summary) {
+    if (!mediaSupported()) return;
+    if (!keepAliveActive()) { clearMedia(); return; }
+
+    var targetMs = global.T8Store.settings().dailyTargetMinutes * 60000;
+    var title = MEDIA_TITLES[summary.state] || 'Track8';
+    var subtitle = mediaSubtitle(summary, targetMs);
+    var key = title + '|' + subtitle;
+
+    if (key !== lastMediaKey) {
+      lastMediaKey = key;
+      try {
+        navigator.mediaSession.metadata = new global.MediaMetadata({
+          title: title,
+          artist: subtitle,
+          album: 'Track8',
+          artwork: [
+            { src: './icons/icon-192.png', sizes: '192x192', type: 'image/png' },
+            { src: './icons/icon-512.png', sizes: '512x512', type: 'image/png' }
+          ]
+        });
+      } catch (e) { /* metadata is cosmetic */ }
+    }
+
+    try {
+      // Paused reads as "the clock is not running", which is exactly what the
+      // play button then offers to fix.
+      navigator.mediaSession.playbackState =
+        (summary.state === TL.STATES.WORKING || summary.state === TL.STATES.MEETING)
+          ? 'playing' : 'paused';
+    } catch (e) { /* ignore */ }
+
+    // The progress bar is the day against its target. setPositionState throws
+    // if position runs past duration, which an overtime day always does.
+    if (targetMs > 0 && navigator.mediaSession.setPositionState) {
+      try {
+        navigator.mediaSession.setPositionState({
+          duration: targetMs / 1000,
+          position: Math.min(targetMs, summary.creditedMs) / 1000,
+          playbackRate: 1
+        });
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  /**
+   * Decide whether the silent track should be running at all, and keep the
+   * lock screen in step with it.
+   *
+   * Two reasons to hold it: a resting segment that layer 2 has to nag through,
+   * or the lock-screen card, which needs audio for the whole shift and not
+   * just the breaks. Neither applies to a day that has not started or has
+   * already been ended.
+   */
+  function syncBackground(summary, cfg) {
+    var open = summary.state !== TL.STATES.ENDED && summary.state !== 'IDLE';
+
+    if (open && lockScreenEnabled()) {
+      wireMediaActions();
+      startKeepAlive(false);
+    } else if (!(cfg && cfg.resting)) {
+      stopKeepAlive();
+    }
+
+    updateMedia(summary);
   }
 
   /**
@@ -335,23 +499,59 @@
 
   /* ------------------------------------------------------ break reminders */
 
+  /**
+   * What each naggable state is called, when it starts nagging, and whether it
+   * is worth keeping the page alive for.
+   *
+   * `kind` is the key into the quip packs. `resting` means the time is not
+   * being credited, which is what earns an "End ..." action button and the
+   * silent keep-alive track; a meeting and a long stretch at the desk are both
+   * credited, so they get a nudge and nothing else - keeping a phone awake for
+   * time that is already counting would be a battery cost with no payoff.
+   *
+   * WORKING is in here as the "you have not moved in two hours" reminder: it is
+   * the same shape as every other one, an open segment that has run too long.
+   */
   function config(state) {
     var s = global.T8Store.settings();
+
     if (state === TL.STATES.LUNCH) {
       return {
-        label: 'Lunch',
-        icon: '🍱',
-        firstMinutes: s.lunchAlertMinutes,
-        repeatMinutes: s.lunchRepeatMinutes
+        kind: 'LUNCH', label: 'Lunch', icon: '🍱', resting: true,
+        firstMinutes: s.lunchAlertMinutes, repeatMinutes: s.lunchRepeatMinutes
       };
     }
-    return {
-      label: 'Break',
-      icon: '☕',
-      firstMinutes: s.breakAlertMinutes,
-      repeatMinutes: s.breakRepeatMinutes
-    };
+    if (state === TL.STATES.BREAK) {
+      return {
+        kind: 'BREAK', label: 'Break', icon: '☕', resting: true,
+        firstMinutes: s.breakAlertMinutes, repeatMinutes: s.breakRepeatMinutes
+      };
+    }
+    // Zero is how the settings screen says "never nag me about this one". It
+    // has to be checked here rather than left to dueIndex, which would read a
+    // zero-minute allowance as "already over" and fire on the first tick.
+    if (state === TL.STATES.PAUSED && s.pauseAlertMinutes > 0) {
+      return {
+        kind: 'PAUSE', label: 'Pause', icon: '⏸️', resting: true,
+        firstMinutes: s.pauseAlertMinutes, repeatMinutes: s.pauseRepeatMinutes
+      };
+    }
+    if (state === TL.STATES.MEETING && s.meetingAlertMinutes > 0) {
+      return {
+        kind: 'MEETING', label: 'Meeting', icon: '👥', resting: false,
+        firstMinutes: s.meetingAlertMinutes, repeatMinutes: s.meetingRepeatMinutes
+      };
+    }
+    if (state === TL.STATES.WORKING && s.stretchAlertMinutes > 0) {
+      return {
+        kind: 'STRETCH', label: 'At the desk', icon: '🧘', resting: false,
+        firstMinutes: s.stretchAlertMinutes, repeatMinutes: s.stretchRepeatMinutes
+      };
+    }
+    return null;
   }
+
+  var OVERTIME = { kind: 'OVERTIME', label: 'Day complete', icon: '🎯' };
 
   /**
    * Body of the pinned notification.
@@ -362,12 +562,12 @@
    * was posted at the moment the break started, so it survives regardless. If
    * everything else fails, the shade still answers "when should I be back?".
    */
+  function clock(ms) {
+    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
   function ongoingBody(cfg, since) {
-    var time = function (ms) {
-      return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    };
-    return cfg.label + ' started ' + time(since) + ' · back by ' + time(since + cfg.firstMinutes * 60000) +
-      '. Tap "End ' + cfg.label.toLowerCase() + '" when you are.';
+    return 'Started ' + clock(since) + '. Tap "End ' + cfg.label.toLowerCase() + '" when you are back.';
   }
 
   /**
@@ -378,9 +578,12 @@
     var cfg = config(state);
     nagCursor = { since: since, fired: -1 };
 
-    startKeepAlive(cfg.label + ' running');
+    startKeepAlive(true);
 
-    return show(cfg.icon + ' On ' + cfg.label.toLowerCase(), {
+    // The time goes in the title because the title is the one line Android
+    // renders in bold - a notification body is plain text, with no markup of
+    // any kind, so "back by 14:35" can only be emphasised by being up here.
+    return show(cfg.icon + ' ' + cfg.label + ' · back by ' + clock(since + cfg.firstMinutes * 60000), {
       body: ongoingBody(cfg, since),
       tag: TAG_ONGOING,
       renotify: false,
@@ -416,32 +619,119 @@
     return Math.floor((minutes - cfg.firstMinutes) / repeat);
   }
 
+  /**
+   * The facts half, one short sentence per kind.
+   *
+   * Short on purpose: the quip is already a line, the title carries the minutes,
+   * and Android truncates a notification body at about two lines on a lock
+   * screen. Everything worth acting on has to survive that cut.
+   */
+  function nagFacts(cfg, minutes, over) {
+    if (cfg.resting) return over + ' min over your ' + cfg.firstMinutes + ' min ' + cfg.label.toLowerCase() + '. Not counting.';
+    if (cfg.kind === 'MEETING') return minutes + ' min in. Still counting towards your day.';
+    if (cfg.kind === 'STRETCH') return minutes + ' min at the desk without a break.';
+    return minutes + ' min.';
+  }
+
   function fireNag(state, elapsedMs, cfg, index) {
     var minutes = Math.floor(elapsedMs / 60000);
     var over = minutes - cfg.firstMinutes;
     var settings = global.T8Store.settings();
 
-    var title = cfg.icon + ' ' + cfg.label + ' running ' + minutes + ' min';
-    var body = index === 0
-      ? 'You passed your ' + cfg.firstMinutes + ' min ' + cfg.label.toLowerCase() +
-        '. Tap "End ' + cfg.label.toLowerCase() + '" to get back on the clock.'
-      : over + ' min over your ' + cfg.firstMinutes + ' min limit. Still on ' +
-        cfg.label.toLowerCase() + ' - this time is not counting towards your 8 hours.';
+    // The quip leads, the facts follow. Guarded because a rolling deploy can
+    // serve an index.html that predates js/quips.js, and this is the one path
+    // that must never throw.
+    var quip = global.T8Quips ? global.T8Quips.forKind(cfg.kind, Math.max(0, over)) : '';
+    var facts = nagFacts(cfg, minutes, over);
 
     chime();
     buzz();
 
-    return show(title, {
-      body: body,
+    var options = {
+      body: quip ? quip + ' ' + facts : facts,
       tag: TAG_NAG,
       renotify: true,
-      requireInteraction: true,
+      requireInteraction: cfg.resting,
       vibrate: settings.vibrate ? BUZZ_PATTERN : undefined,
       badge: './icons/badge-72.png',
       icon: './icons/icon-192.png',
-      data: { kind: 'nag', state: state, elapsedMs: elapsedMs },
-      actions: [{ action: 'resume', title: 'End ' + cfg.label.toLowerCase() }]
+      data: { kind: 'nag', state: state, elapsedMs: elapsedMs }
+    };
+
+    // Only resting time has a one-tap fix from the shade. "End meeting" would
+    // be a lie - the meeting is not the app's to end - and there is no action
+    // that shortens a long stretch at the desk except standing up.
+    if (cfg.resting) {
+      options.actions = [{ action: 'resume', title: 'End ' + cfg.label.toLowerCase() }];
+    }
+
+    // Elapsed time lives in the title, which is the only part of a notification
+    // the OS renders bold - and it is formatted rather than left in raw
+    // minutes, because "1h 22m" reads at a glance and "82 min" does not.
+    return show(cfg.icon + ' ' + cfg.label + ' · ' + shortMs(elapsedMs), options);
+  }
+
+  /**
+   * The day is done: credited time has reached the target.
+   *
+   * Fired once when the goal is crossed and then every `overtimeRepeatMinutes`
+   * while the clock is still running, so a day nobody ended keeps asking. Like
+   * every other reminder it is derived from measured time, not counted, so a
+   * phone that was asleep through the crossing fires one on wake rather than a
+   * queue of them.
+   */
+  function fireOvertime(overtimeMs, index) {
+    var minutes = Math.floor(overtimeMs / 60000);
+    var settings = global.T8Store.settings();
+    var quip = global.T8Quips ? global.T8Quips.forKind(OVERTIME.kind, minutes) : '';
+    var facts = index === 0
+      ? 'You have hit your daily target.'
+      : minutes + ' min past your target, still on the clock.';
+
+    chime();
+    buzz();
+
+    return show(OVERTIME.icon + ' ' + OVERTIME.label +
+      (minutes > 0 ? ' · ' + shortMs(overtimeMs) + ' over' : ''), {
+      body: quip ? quip + ' ' + facts : facts,
+      tag: TAG_NAG,
+      renotify: true,
+      requireInteraction: false,
+      vibrate: settings.vibrate ? BUZZ_PATTERN : undefined,
+      badge: './icons/badge-72.png',
+      icon: './icons/icon-192.png',
+      data: { kind: 'overtime', overtimeMs: overtimeMs }
     });
+  }
+
+  // Which day the overtime reminder has already fired for, and how many times.
+  // Keyed by date so a new day starts silent, and so a phone left open
+  // overnight does not think yesterday's target is still news.
+  var overtimeCursor = { key: null, fired: -1 };
+
+  function checkOvertime(summary) {
+    var key = TL.dateKeyOf(Date.now());
+    if (overtimeCursor.key !== key) overtimeCursor = { key: key, fired: -1 };
+
+    var settings = global.T8Store.settings();
+    if (!settings.overtimeReminder) return;
+
+    // Only while the clock is actually running. A day that has been ended has
+    // already answered the question this reminder asks.
+    var running = summary.state === TL.STATES.WORKING || summary.state === TL.STATES.MEETING;
+    if (!running) return;
+
+    var target = settings.dailyTargetMinutes * 60000;
+    if (target <= 0 || summary.creditedMs < target) return;
+
+    var overtimeMs = summary.creditedMs - target;
+    var repeat = Math.max(1, settings.overtimeRepeatMinutes) * 60000;
+    var index = Math.floor(overtimeMs / repeat);
+
+    if (index > overtimeCursor.fired) {
+      overtimeCursor.fired = index;
+      fireOvertime(overtimeMs, index);
+    }
   }
 
   /**
@@ -452,19 +742,31 @@
    * elapsed time is always measured, never counted.
    */
   function check(summary) {
-    if (!summary || (summary.state !== TL.STATES.BREAK && summary.state !== TL.STATES.LUNCH)) {
-      if (nagCursor.since !== null) onBreakEnded();
-      return null;
-    }
+    if (!summary) return null;
+
+    checkOvertime(summary);
 
     var cfg = config(summary.state);
+
+    if (!cfg) {
+      if (nagCursor.since !== null) onBreakEnded();
+      // Still runs for a state with no reminder of its own: the lock-screen
+      // card belongs to the whole shift, not only to the naggable parts.
+      syncBackground(summary, null);
+      return null;
+    }
 
     // A break restored from storage after a reload has no cursor yet. Adopt it
     // without replaying reminders the user already saw before the reload.
     if (nagCursor.since !== summary.openSince) {
       nagCursor = { since: summary.openSince, fired: -1 };
-      startKeepAlive(cfg.label + ' running');
+      // Only resting time is worth holding the page awake for on its own
+      // account. Working and meeting time is credited whether the page lives
+      // or not - it is the lock screen, below, that asks for it there.
+      if (cfg.resting) startKeepAlive(true);
     }
+
+    syncBackground(summary, cfg);
 
     var index = dueIndex(summary.openMs, cfg);
     if (index > nagCursor.fired) {
@@ -477,7 +779,9 @@
   }
 
   function init(options) {
-    callbacks.onResumeRequest = (options && options.onResumeRequest) || null;
+    var opts = options || {};
+    callbacks.onResumeRequest = opts.onResumeRequest || null;
+    MEDIA_ACTIONS.forEach(function (pair) { callbacks[pair[1]] = opts[pair[1]] || null; });
     listenForServiceWorkerMessages();
     return registerServiceWorker();
   }

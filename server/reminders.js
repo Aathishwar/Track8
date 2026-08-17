@@ -20,6 +20,8 @@ const fs = require('fs');
 const path = require('path');
 const webpush = require('web-push');
 
+const quips = require('./quips');
+
 const DATA_FILE = process.env.DATA_FILE || path.join(__dirname, 'data', 'reminders.json');
 
 // Stop nagging eventually. If someone ends a break while offline, the cancel
@@ -116,11 +118,18 @@ function payloadFor(record, now) {
   const icon = record.kind === 'LUNCH' ? '🍱' : '☕';
   const over = minutes - record.firstMinutes;
 
+  const facts = record.pushCount === 0
+    ? `You passed your ${record.firstMinutes} min ${lower}. Tap "End ${lower}" to get back on the clock.`
+    : `${over} min over your ${record.firstMinutes} min limit. Still on ${lower} - this time is not counting towards your goal.`;
+
+  // Empty unless PUSH_QUIPS is set. When it is, the quip leads and the facts
+  // follow, same as the in-app reminder - and it is read from an in-memory
+  // pool, so nothing here can delay a send.
+  const quip = quips.line(record.kind, over);
+
   return {
     title: `${icon} ${label} running ${minutes} min`,
-    body: record.pushCount === 0
-      ? `You passed your ${record.firstMinutes} min ${lower}. Tap "End ${lower}" to get back on the clock.`
-      : `${over} min over your ${record.firstMinutes} min limit. Still on ${lower} - this time is not counting towards your goal.`,
+    body: quip ? `${quip} ${facts}` : facts,
     actionTitle: `End ${lower}`
   };
 }
@@ -187,6 +196,9 @@ async function tick() {
 function startScheduler() {
   setInterval(() => {
     tick().catch((e) => console.error('[reminders] tick failed:', e.message));
+    // Rate limited to a few hours inside quips itself, and never awaited: the
+    // reminder pass must not wait on a model, ever.
+    quips.refresh();
   }, TICK_MS);
 }
 

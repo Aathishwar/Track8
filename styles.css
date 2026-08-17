@@ -10,15 +10,29 @@
    ========================================================================== */
 
 :root {
-  --bg-primary: #121212;
-  --bg-surface: #1e1e1e;
-  --bg-surface-elevated: #262626;
-  --bg-surface-hover: #333333;
+  /* Deep blue-green graphite. Not the neutral #121212 every framework ships,
+     and not a flat grey either: a few degrees of teal in the surfaces so they
+     belong to the accent, kept far enough below it in chroma that nothing reads
+     as tinted on its own. */
+  --bg-primary: #080f11;
+  --bg-surface: #131c1f;
+  --bg-surface-elevated: #1a262a;
+  --bg-surface-hover: #243338;
+  /* The face of a flip card, and the one place a surface is meant to look
+     printed rather than lit. */
+  --bg-sunken: #0d1618;
 
-  --primary-emerald: #10b981;
-  --primary-emerald-dark: #059669;
-  --primary-emerald-light: #34d399;
-  --primary-glow: rgba(16, 185, 129, 0.25);
+  /* Indigo carries the day: the ring, the primary button, every credited hour.
+     Green was doing two jobs at once - "this is the brand" and "this counts" -
+     and it also fixed the app's whole temperature to one hue. */
+  /* Blue-green. This token is text as often as it is fill - the percentage
+     badge, the active nav item, the return chip - so it is measured against
+     --bg-surface rather than picked: 8.16:1, with dark ink on it at 7.97:1 for
+     the primary button. */
+  --accent: #20c7b5;
+  --accent-dark: #0d9488;
+  --accent-light: #5eead4;
+  --accent-glow: rgba(32, 199, 181, 0.26);
 
   --amber-warning: #f59e0b;
   --amber-warning-dark: #d97706;
@@ -29,24 +43,29 @@
   /* One colour per activity, used by the status pill, the stacked week bars,
      the day timeline and the stat row alike, so a colour means the same thing
      everywhere in the app. */
-  --activity-work: #10b981;
-  --activity-work-dark: #059669;
-  --activity-meeting: #3b82f6;
-  --activity-meeting-dark: #2563eb;
+  /* Four hues that stay apart at 6px and none of them adjacent on the wheel:
+     teal, indigo, amber, pink. Work shares the accent because credited time
+     *is* what the app is for; meetings take indigo, which is the neighbour
+     teal is least likely to be confused with at a glance. */
+  --activity-work: #20c7b5;
+  --activity-work-dark: #0d9488;
+  --activity-meeting: #818cf8;
+  --activity-meeting-dark: #6366f1;
   --activity-break: #f59e0b;
   --activity-break-dark: #d97706;
-  --activity-lunch: #a855f7;
-  --activity-lunch-dark: #9333ea;
+  --activity-lunch: #ec4899;
+  --activity-lunch-dark: #db2777;
   --activity-paused: #64748b;
 
-  --text-primary: #f3f4f6;
-  --text-secondary: #9ca3af;
-  /* 4.6:1 on --bg-surface. The old #6b7280 measured 3.45:1, below the 4.5:1
-     AA floor, and it is the colour of nearly every small label in the app. */
-  --text-muted: #8d95a3;
+  --text-primary: #eef4f4;
+  --text-secondary: #97a6a8;
+  /* Measured against --bg-surface every time the surface changes; it is the
+     colour of nearly every small label in the app. The version before last
+     measured 3.45:1, below the AA floor. */
+  --text-muted: #879698;
 
   --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-accent: rgba(16, 185, 129, 0.4);
+  --border-accent: rgba(32, 199, 181, 0.45);
 
   /* System fonts only: no CDN request, so the app is genuinely offline-capable
      once installed, and there is no flash of unstyled text on a slow network. */
@@ -58,17 +77,39 @@
   --radius-lg: 20px;
   --radius-full: 9999px;
 
-  --glass-bg: rgba(30, 30, 30, 0.78);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.5);
-  --shadow-glow: 0 0 20px rgba(16, 185, 129, 0.28);
+  --glass-bg: rgba(19, 28, 31, 0.82);
+  /* The chrome that sits over content and therefore cannot be a card: it needs
+     its own near-opaque colour in each theme, not a translucent card colour. */
+  --chrome-bg: rgba(8, 15, 17, 0.9);
+  /* Hairlines drawn *into* a surface: the flip-card seam, the ring's empty
+     track. In the dark theme they are shadow; in the light one they are ink. */
+  --hairline-hard: rgba(0, 0, 0, 0.62);
+  --track-line: rgba(255, 255, 255, 0.07);
+  --rest-track: rgba(255, 255, 255, 0.16);
+  /* Text on a filled accent button. Dark ink on a light indigo: 5.58:1, where
+     white on the same fill manages 3.6 and fails. */
+  --on-primary: #04211f;
+  /* Two shadows, not one. A single black drop shadow is what makes a dark UI
+     look flat and printed; the ambient one below it lifts the card off the
+     background the way a real surface does. */
+  --shadow-lg: 0 14px 34px rgba(0, 0, 0, 0.55), 0 2px 8px rgba(0, 0, 0, 0.35);
+  --shadow-glow: 0 6px 18px rgba(32, 199, 181, 0.26);
+  /* The light that appears to be falling on every raised surface. Used as the
+     first layer of the card background, so the top edge is brighter than the
+     bottom and the eye is told which way is up. */
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.014) 46%, rgba(255, 255, 255, 0) 100%);
 
-  /* Histogram geometry. The track is a minimum rather than a fixed height —
-     the chart grows into whatever the week card is not using — so the goal
-     line cannot be placed at a fixed pixel offset. Instead every piece of
-     chrome around the track is a token, the two sums below describe the track
-     band in terms of the wrapper, and ui.js supplies only --goal-ratio. That
-     keeps the line correct through a resize, an orientation change and the
-     first paint, none of which run the renderer again. */
+  --nav-height: 62px;
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-top: env(safe-area-inset-top, 0px);
+
+  /* Histogram geometry. The track is a fixed height so a week reads the same
+     on every screen, but the goal line is still placed from tokens rather than
+     a pixel offset: every piece of chrome around the track is named here, the
+     two sums below describe the track band in terms of the wrapper, and ui.js
+     supplies only --goal-ratio. That keeps the line correct through a resize,
+     an orientation change and the first paint, none of which run the renderer
+     again - and it survives the track height changing. */
   --bar-track-height: 140px;
   --bar-label-height: 22px;
   --bar-val-height: 14px;
@@ -82,9 +123,11 @@
     var(--histogram-pad-top) + var(--bar-val-height) + var(--bar-gap) + var(--bar-base-offset)
   );
 
-  --nav-height: 62px;
-  --safe-bottom: env(safe-area-inset-bottom, 0px);
-  --safe-top: env(safe-area-inset-top, 0px);
+  /* The column the whole app lives in. A phone gets all of it; a tablet or a
+     desktop gets a wider one rather than a 520px strip marooned in the middle
+     of an empty screen. Both the content column and the fixed nav read it —
+     they have to agree, or the nav stops lining up with what it navigates. */
+  --app-max: 520px;
 
   /* The timer is a glance screen: reaching for the last button should never
      mean scrolling first. Every vertical dimension on it is therefore tied to
@@ -105,6 +148,113 @@
   --motion-base: 200ms;
   --motion-slow: 420ms;
   --ease-out: cubic-bezier(0.22, 0.9, 0.32, 1);
+}
+
+/* ------------------------------------------------------------- light mode */
+
+/* Not the dark palette inverted. A light UI needs its own decisions: surfaces
+   are warm off-whites rather than pure white (which glares and makes every
+   border look dirty), the accent darkens so it can carry text, and the depth
+   that came from a sheen and a glow in the dark theme comes from real, soft
+   shadows here - light falls *onto* a light surface, it does not leak out of it.
+   Applied by [data-theme="light"] on <html>, which app.js sets from the
+   setting; "system" leaves the attribute off and the media query decides. */
+:root[data-theme="light"],
+:root[data-theme="system"] {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] {
+    --bg-primary: #eef3f3;
+    --bg-surface: #ffffff;
+    --bg-surface-elevated: #f4f8f8;
+    --bg-surface-hover: #e4ecec;
+    --bg-sunken: #eaf1f1;
+
+    --accent: #0f766e;
+    --accent-dark: #115e59;
+    --accent-light: #14887e;
+    --accent-glow: rgba(15, 118, 110, 0.16);
+
+    --activity-work: #0f766e;
+    --activity-work-dark: #115e59;
+    --activity-meeting: #4338ca;
+    --activity-meeting-dark: #3730a3;
+    --activity-break: #a16207;
+    --activity-break-dark: #854d0e;
+    --activity-lunch: #be185d;
+    --activity-lunch-dark: #9d174d;
+    --activity-paused: #52606d;
+
+    --amber-warning: #a16207;
+    --red-danger: #b91c1c;
+
+    --text-primary: #0d1917;
+    --text-secondary: #3f4d4c;
+    /* Measured on --bg-surface, like its dark counterpart. */
+    --text-muted: #53625f;
+
+    --border-subtle: rgba(13, 25, 23, 0.12);
+    --border-accent: rgba(15, 118, 110, 0.42);
+
+    --glass-bg: rgba(255, 255, 255, 0.93);
+    --shadow-lg: 0 10px 26px rgba(13, 25, 23, 0.09), 0 2px 6px rgba(13, 25, 23, 0.05);
+    --shadow-glow: 0 6px 16px rgba(15, 118, 110, 0.22);
+    --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 60%);
+  --chrome-bg: rgba(238, 243, 243, 0.9);
+  --hairline-hard: rgba(13, 25, 23, 0.28);
+  --track-line: rgba(13, 25, 23, 0.12);
+  --rest-track: rgba(13, 25, 23, 0.16);
+  --on-primary: #ffffff;
+  }
+}
+
+/* The same palette, chosen rather than inherited from the OS. Kept as a
+   separate block rather than a shared class because custom properties cannot
+   be shared between a media query and an attribute selector without either
+   duplicating them or paying for a second cascade layer. */
+:root[data-theme="light"] {
+  --bg-primary: #eef3f3;
+  --bg-surface: #ffffff;
+  --bg-surface-elevated: #f4f8f8;
+  --bg-surface-hover: #e4ecec;
+  --bg-sunken: #eaf1f1;
+
+  --accent: #0f766e;
+  --accent-dark: #115e59;
+  --accent-light: #14887e;
+  --accent-glow: rgba(15, 118, 110, 0.16);
+
+  --activity-work: #0f766e;
+  --activity-work-dark: #115e59;
+  --activity-meeting: #4338ca;
+  --activity-meeting-dark: #3730a3;
+  --activity-break: #a16207;
+  --activity-break-dark: #854d0e;
+  --activity-lunch: #be185d;
+  --activity-lunch-dark: #9d174d;
+  --activity-paused: #52606d;
+
+  --amber-warning: #a16207;
+  --red-danger: #b91c1c;
+
+  --text-primary: #0d1917;
+  --text-secondary: #3f4d4c;
+  --text-muted: #53625f;
+
+  --border-subtle: rgba(13, 25, 23, 0.12);
+  --border-accent: rgba(15, 118, 110, 0.42);
+
+  --glass-bg: rgba(255, 255, 255, 0.93);
+  --shadow-lg: 0 10px 26px rgba(13, 25, 23, 0.09), 0 2px 6px rgba(13, 25, 23, 0.05);
+  --shadow-glow: 0 6px 16px rgba(15, 118, 110, 0.22);
+  --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 60%);
+  --chrome-bg: rgba(238, 243, 243, 0.9);
+  --hairline-hard: rgba(13, 25, 23, 0.28);
+  --track-line: rgba(13, 25, 23, 0.12);
+  --rest-track: rgba(13, 25, 23, 0.16);
+  --on-primary: #ffffff;
 }
 
 * {
@@ -129,6 +279,39 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Ambient light behind everything.
+   A flat background is what makes a dark app feel like a void with boxes on it.
+   Two very soft pools - emerald where the day's progress lives, and the
+   meeting blue in the opposite corner - give the screen a direction and a
+   temperature. Fixed and painted once: it never scrolls, never animates, and
+   costs nothing per frame. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 620px at 82% -10%, rgba(32, 199, 181, 0.14), transparent 62%),
+    radial-gradient(900px 560px at 4% 106%, rgba(129, 140, 248, 0.08), transparent 64%);
+}
+
+/* The same two pools, far weaker. On a light ground a tint at dark-theme
+   strength reads as a printing fault rather than as light. */
+:root[data-theme="light"] body::before {
+  background:
+    radial-gradient(1100px 620px at 82% -10%, rgba(4, 121, 90, 0.07), transparent 62%),
+    radial-gradient(900px 560px at 4% 106%, rgba(29, 78, 216, 0.05), transparent 64%);
+}
+
+@media (prefers-color-scheme: light) {
+  :root[data-theme="system"] body::before {
+    background:
+      radial-gradient(1100px 620px at 82% -10%, rgba(4, 121, 90, 0.07), transparent 62%),
+      radial-gradient(900px 560px at 4% 106%, rgba(29, 78, 216, 0.05), transparent 64%);
+  }
+}
+
 /* Set while a modal is open. Without it the page behind a bottom sheet keeps
    scrolling under the user's finger once the sheet's own scroll bottoms out,
    which on a phone reads as the sheet having lost the gesture. */
@@ -138,26 +321,31 @@ body.modal-open {
 
 .app-container {
   width: 100%;
-  max-width: 520px;
+  max-width: var(--app-max);
   margin: 0 auto;
   min-height: 100vh;
   min-height: 100dvh;
   display: flex;
   flex-direction: column;
   position: relative;
+  /* Above the ambient wash on body::before. */
+  z-index: 1;
 }
 
-/* No backdrop-filter here on purpose. These cards sit on a flat --bg-primary
-   body, and blurring a solid colour returns the same solid colour: the effect
-   was invisible while costing a GPU blur pass over the largest area on screen,
-   every frame of every scroll. The blur is kept only where there is real
-   content behind it — the sticky header, the fixed nav and the modal scrim.
-   The 1px light inner stroke gives the same "lifted glass" edge for free. */
+/* No backdrop-filter here on purpose. What sits behind these cards is the
+   ambient wash on body::before — a gradient so soft that blurring it returns
+   very nearly the same pixels, for the cost of a GPU pass over the largest area
+   on screen, every frame of every scroll. The blur is kept only where real
+   content moves behind the surface: the sticky header, the fixed nav and the
+   modal scrim. The sheen and the 1px inner stroke give the lifted-glass edge
+   for free. */
 .glass-panel {
-  background: var(--glass-bg);
+  /* Sheen first, colour under it: the card is lit from above rather than being
+     a flat rectangle of one grey. */
+  background: var(--sheen), var(--glass-bg);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
 /* ------------------------------------------------------------------ header */
@@ -171,7 +359,7 @@ body.modal-open {
   justify-content: space-between;
   gap: 10px;
   padding: calc(12px + var(--safe-top)) 16px 12px;
-  background: rgba(18, 18, 18, 0.85);
+  background: var(--chrome-bg);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-subtle);
@@ -190,9 +378,26 @@ body.modal-open {
   width: 34px;
   height: 34px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--primary-emerald), var(--primary-emerald-dark));
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
   color: #06231a;
   flex-shrink: 0;
+}
+
+/* Tanglish mode, worn on the sleeve. The mark that was tapped five times is
+   the mark that changes, so the state has a visible home and turning it off
+   again is discoverable from the same place. */
+.tanglish .logo-icon {
+  background: linear-gradient(135deg, var(--amber-warning), var(--activity-lunch));
+  color: #2a1500;
+}
+
+.sub-badge.tanglish {
+  color: var(--amber-warning);
+}
+
+.sub-badge.tanglish::after {
+  content: ' · TN';
+  letter-spacing: 0.4px;
 }
 
 .brand-text {
@@ -209,7 +414,7 @@ body.modal-open {
 
 .sub-badge {
   font-size: 11px;
-  color: var(--primary-emerald-light);
+  color: var(--accent-light);
   font-weight: 600;
 }
 
@@ -261,7 +466,7 @@ body.modal-open {
 }
 
 .notify-btn.enabled {
-  color: var(--primary-emerald);
+  color: var(--accent);
   border-color: var(--border-accent);
 }
 
@@ -272,8 +477,8 @@ body.modal-open {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--primary-emerald);
-  box-shadow: 0 0 6px var(--primary-glow);
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-glow);
 }
 
 /* ---------------------------------------------------------------- profiles */
@@ -304,7 +509,7 @@ body.modal-open {
   width: 26px;
   height: 26px;
   border-radius: 50%;
-  background: linear-gradient(135deg, var(--primary-emerald), var(--primary-emerald-dark));
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
   color: #06231a;
   font-size: 12px;
   font-weight: 700;
@@ -392,7 +597,7 @@ body.modal-open {
 }
 
 .person-check {
-  color: var(--primary-emerald);
+  color: var(--accent);
   font-weight: 700;
 }
 
@@ -411,7 +616,7 @@ body.modal-open {
   background: none;
   border: none;
   border-radius: var(--radius-sm);
-  color: var(--primary-emerald);
+  color: var(--accent);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -556,8 +761,8 @@ body.modal-open {
 }
 
 .status-working {
-  color: var(--primary-emerald);
-  background: rgba(16, 185, 129, 0.12);
+  color: var(--accent);
+  background: rgba(32, 199, 181, 0.12);
   border-color: var(--border-accent);
 }
 
@@ -567,8 +772,8 @@ body.modal-open {
 
 .status-meeting {
   color: var(--activity-meeting);
-  background: rgba(59, 130, 246, 0.12);
-  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(129, 140, 248, 0.12);
+  border-color: rgba(129, 140, 248, 0.4);
 }
 
 .status-meeting .status-dot {
@@ -583,8 +788,8 @@ body.modal-open {
 
 .status-lunch {
   color: var(--activity-lunch);
-  background: rgba(168, 85, 247, 0.12);
-  border-color: rgba(168, 85, 247, 0.35);
+  background: rgba(236, 72, 153, 0.12);
+  border-color: rgba(236, 72, 153, 0.35);
 }
 
 .status-paused {
@@ -594,9 +799,9 @@ body.modal-open {
 }
 
 .status-finished {
-  color: var(--primary-emerald-light);
-  background: rgba(52, 211, 153, 0.12);
-  border-color: rgba(52, 211, 153, 0.3);
+  color: var(--accent-light);
+  background: rgba(94, 234, 212, 0.12);
+  border-color: rgba(94, 234, 212, 0.3);
 }
 
 @keyframes pulse {
@@ -644,7 +849,7 @@ body.modal-open {
   border-radius: 50%;
   background: radial-gradient(circle at 50% 50%,
     transparent 72%,
-    rgba(16, 185, 129, 0.20) 84%,
+    rgba(32, 199, 181, 0.20) 84%,
     transparent 97%);
   opacity: 0;
   transition: opacity var(--motion-slow) var(--ease-out);
@@ -677,7 +882,7 @@ body.modal-open {
   inset: 0;
   border-radius: 50%;
   background: radial-gradient(circle at 50% 8%,
-    rgba(52, 211, 153, 0.42),
+    rgba(94, 234, 212, 0.42),
     transparent 34%);
   opacity: 0;
   transition: opacity var(--motion-slow) var(--ease-out);
@@ -729,37 +934,98 @@ body.modal-open {
 
 .ring-bg {
   fill: none;
-  stroke: rgba(255, 255, 255, 0.06);
+  stroke: var(--track-line);
 }
 
 .ring-fill {
   fill: none;
-  stroke: var(--primary-emerald);
+  stroke: var(--accent);
   stroke-linecap: round;
   transition: stroke-dashoffset var(--motion-slow) var(--ease-out), stroke var(--motion-base) ease;
 }
 
 .ring-fill.complete {
-  stroke: var(--primary-emerald-light);
+  stroke: var(--accent-light);
+}
+
+/* ------------------------------------------------------------- break arc */
+
+/* Rotated to start at twelve o'clock like the day ring, so both arcs grow the
+   same way and the eye does not have to learn two clocks. */
+.rest-track,
+.rest-fill {
+  fill: none;
+  transform: rotate(-90deg);
+  transform-origin: 110px 110px;
+}
+
+/* Visibly darker than the day ring's own track. This arc appears only during a
+   break and disappears afterwards, so it has to announce itself when it does -
+   at the old weight it was a 4px hairline nobody could find. */
+.rest-track {
+  stroke: var(--rest-track);
+}
+
+/* The arc itself grows every second, so the transition has to be shorter than
+   a second or it never arrives. Stroke and dashoffset only - both compositor
+   friendly, and this is the same budget the outer ring already spends. */
+.rest-fill {
+  stroke: var(--activity-break);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 0.9s linear, stroke var(--motion-base) ease;
+}
+
+[data-state="LUNCH"] .rest-fill { stroke: var(--activity-lunch); }
+[data-state="PAUSED"] .rest-fill { stroke: var(--activity-paused); }
+
+/* Lap two and lap three. One full lap is the allowance, so every further lap is
+   another whole allowance overrun and the colour steps up to say so. */
+.rest-fill.lap-2 {
+  stroke: var(--amber-warning);
+}
+
+.rest-fill.lap-3 {
+  stroke: var(--red-danger);
+  animation: rest-over 1.8s ease-in-out infinite;
+}
+
+/* The frame a lap rolls over on. Without this the arc animates *backwards*
+   around the entire circle to get from full to empty, which reads as the timer
+   running in reverse. */
+.rest-fill.lap-reset {
+  transition: none;
+}
+
+@keyframes rest-over {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* Plays once when a break starts: the arc sweeps up from nothing so the reset
+   to zero is something you see happen rather than something you notice later. */
+.rest-fill.arming {
+  animation: rest-arm var(--motion-slow) var(--ease-out);
+}
+
+@keyframes rest-arm {
+  from { opacity: 0; transform: rotate(-90deg) scale(0.82); }
+  to   { opacity: 1; transform: rotate(-90deg) scale(1); }
 }
 
 .ring-fill.meeting {
   stroke: var(--activity-meeting);
 }
 
-/* One colour per activity, the same rule the stat row, the week bars and the
-   status pill follow. The three resting states used to share the break's amber,
-   which only became visibly wrong once the caption inside the ring started
-   naming the activity in its own colour: an amber ring under a purple "LUNCH"
-   contradicted itself. */
-.ring-fill.resting {
-  stroke: var(--activity-break);
-}
-
-.ring-fill.lunch {
-  stroke: var(--activity-lunch);
-}
-
+/* The day ring keeps the day's colour while you are resting.
+   It used to take the activity's colour, which was right when it was the only
+   arc on screen. Now that the break has its own arc inside it, two amber rings
+   sat one inside the other showing two different percentages - the day at 36%
+   and the break at 60% - which is one ring too many to read at a glance. The
+   activity's colour is still on the caption, the digits, the status pill, the
+   hourglass and the inner arc; the outer ring answers only "how much of today
+   is done", in the colour it always uses for that.
+   Paused is the exception below: it is the one state where the day is not
+   moving at all, and a greyed ring says so at a distance. */
 .ring-fill.paused {
   stroke: var(--activity-paused);
 }
@@ -767,7 +1033,7 @@ body.modal-open {
 /* The glow tracks the ring's colour so the halo never contradicts the stroke. */
 .progress-ring-container.tone-meeting::before {
   background: radial-gradient(circle at 50% 50%,
-    transparent 72%, rgba(59, 130, 246, 0.22) 84%, transparent 97%);
+    transparent 72%, rgba(129, 140, 248, 0.22) 84%, transparent 97%);
 }
 
 .progress-ring-container.tone-resting::before {
@@ -777,7 +1043,7 @@ body.modal-open {
 
 .progress-ring-container.tone-lunch::before {
   background: radial-gradient(circle at 50% 50%,
-    transparent 72%, rgba(168, 85, 247, 0.20) 84%, transparent 97%);
+    transparent 72%, rgba(236, 72, 153, 0.20) 84%, transparent 97%);
 }
 
 .progress-ring-container.tone-paused::before {
@@ -809,6 +1075,73 @@ body.modal-open {
   to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+/* Covers the dial and nothing else. Transparent on purpose: the affordance is
+   the hourglass on the caption line, not a chrome button over the clock. */
+.dial-tap {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  border: none;
+  border-radius: var(--radius-full);
+  background: none;
+  cursor: pointer;
+}
+
+.dial-tap:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.dial-caption {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.hourglass {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+/* Flips once when the dial is tapped, so the swap between hours-in and
+   hours-left reads as turning the glass over. Transform only. */
+.hourglass.flip {
+  animation: hg-flip var(--motion-slow) var(--ease-out);
+}
+
+@keyframes hg-flip {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(180deg); }
+}
+
+.hg-sand {
+  fill: var(--accent);
+  opacity: 0.75;
+}
+
+/* The sand level is two scaled paths rather than a redrawn shape: ui.js writes
+   --sand once per whole percent of the day, and the compositor does the rest.
+   `fill-box` is what makes the origin the path's own box; where it is missing
+   the glass simply reads full, which is wrong by a fraction and never broken. */
+.hg-sand-top,
+.hg-sand-bottom {
+  transform-box: fill-box;
+  transition: transform var(--motion-slow) var(--ease-out);
+}
+
+.hg-sand-top {
+  transform-origin: center top;
+  transform: scaleY(var(--sand, 1));
+}
+
+.hg-sand-bottom {
+  transform-origin: center bottom;
+  transform: scaleY(var(--sand-done, 0));
+}
+
+[data-state="BREAK"] .hg-sand { fill: var(--activity-break); }
+[data-state="LUNCH"] .hg-sand { fill: var(--activity-lunch); }
+
 .timer-label {
   font-size: 10px;
   letter-spacing: 1.4px;
@@ -825,12 +1158,162 @@ body.modal-open {
 [data-state="MEETING"] .timer-label { color: var(--activity-meeting); }
 [data-state="PAUSED"] .timer-label { color: var(--activity-paused); }
 
+/* Split-flap clock.
+   Sized from --ring-size rather than from the viewport, because the one
+   constraint that matters is fitting inside the circle it sits in - and the
+   ring is already clamped against vh and vw. At the ring's floor this works out
+   near 18px, at its ceiling near 30px, and the row stays inside the stroke at
+   both ends. */
 .timer-digits {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   font-family: var(--font-mono);
-  font-size: clamp(25px, 4.2vh, 34px);
+  font-size: clamp(16px, calc(var(--ring-size) * 0.135), 30px);
   font-weight: 700;
-  letter-spacing: -1px;
   font-variant-numeric: tabular-nums;
+  /* Shallow enough that the falling flap has some depth, deep enough that it
+     does not smear across a 20px card. */
+  perspective: 220px;
+}
+
+/* A real split-flap, not a card that wobbles.
+   Four faces per digit: the top half already showing the new value, the bottom
+   half still showing the old one, and a flap hinged on the seam whose front is
+   the old top and whose back is the new bottom. The flap falls through 180
+   degrees; at 90 it is edge-on and the back takes over. When it lands it is
+   pixel-identical to the bottom half underneath, so there is nothing to clean
+   up and no timer waiting to swap anything. */
+/* Card proportions follow pqina/flip: the numeral nearly fills the card, with
+   only a hair of margin above and below. A taller card reads as a numeral
+   floating in a box rather than as a printed flap. Digits have no descenders,
+   so 1.08em clears the cap height with room to spare. */
+.fd {
+  position: relative;
+  width: 0.78em;
+  height: 1.08em;
+  border-radius: 0.1em;
+  overflow: hidden;
+  text-align: center;
+}
+
+.fd-half {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 50%;
+  overflow: hidden;
+  background: var(--bg-surface-elevated);
+}
+
+.fd-top {
+  top: 0;
+  border-radius: 0.1em 0.1em 0 0;
+  /* The seam. Two flat halves of the same colour read as one rectangle, and
+     the split is the whole point of a split-flap: the upper flap ends in a
+     hard black edge, and the lower one catches a little light just under it. */
+  box-shadow: inset 0 -1px 0 var(--hairline-hard), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.fd-bottom {
+  bottom: 0;
+  border-radius: 0 0 0.1em 0.1em;
+  background: var(--bg-sunken);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+/* The glyph is drawn full height inside each half and clipped by it, so both
+   halves show the same numeral cut across its waist. */
+.fd-half > i {
+  display: block;
+  height: 1.08em;
+  line-height: 1.08em;
+  font-style: normal;
+}
+
+.fd-bottom > i {
+  margin-top: -0.54em;
+}
+
+.fd-flap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  transform-origin: center bottom;
+  transform-style: preserve-3d;
+  transform: rotateX(0deg);
+}
+
+.fd-face {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  backface-visibility: hidden;
+  background: var(--bg-surface-elevated);
+}
+
+.fd-front {
+  border-radius: 0.1em 0.1em 0 0;
+  box-shadow: inset 0 -1px 0 var(--hairline-hard), inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+/* The back is the new value's *bottom* half, pre-flipped so that it is upright
+   once the flap has landed upside down.
+   It must be rotateX, not rotateY: the flap turns on the X axis, so an X flip
+   cancels it and the digit reads normally, while a Y flip leaves the two
+   rotations composing into a 180-degree spin - which is exactly what it looked
+   like, a numeral falling in upside down. */
+.fd-back {
+  transform: rotateX(180deg);
+  background: var(--bg-sunken);
+  border-radius: 0 0 0.1em 0.1em;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.fd-face > i {
+  display: block;
+  height: 1.08em;
+  line-height: 1.08em;
+  font-style: normal;
+}
+
+.fd-back > i {
+  margin-top: -0.54em;
+}
+
+/* Seconds are the digits nobody reads and the ones that move constantly, so
+   they take the small pair - same trick a real flip clock plays with its
+   date wheel. It also buys back the width six full cards would need inside a
+   132px ring. */
+.fd-sm {
+  font-size: 0.62em;
+}
+
+.fd-sep {
+  padding: 0 1px;
+  color: var(--text-muted);
+}
+
+/* Two identical animations under two class names, alternated per change.
+   Restarting one animation would mean removing the class and forcing a reflow
+   to flush it - a layout read once a second, on the one path in the app that is
+   allowed to touch nothing but text nodes. Swapping the name costs nothing.
+   `forwards` matters: the flap has to stay down on the bottom half, where it is
+   indistinguishable from it, until the next digit sends it back up. */
+.fd.flip-a .fd-flap { animation: fd-fall-a 260ms cubic-bezier(0.4, 0.1, 0.35, 1) forwards; }
+.fd.flip-b .fd-flap { animation: fd-fall-b 260ms cubic-bezier(0.4, 0.1, 0.35, 1) forwards; }
+
+@keyframes fd-fall-a {
+  from { transform: rotateX(0deg); }
+  to   { transform: rotateX(-180deg); }
+}
+
+@keyframes fd-fall-b {
+  from { transform: rotateX(0deg); }
+  to   { transform: rotateX(-180deg); }
 }
 
 .target-progress-text {
@@ -844,15 +1327,15 @@ body.modal-open {
 .percentage-badge {
   padding: 2px 7px;
   border-radius: var(--radius-full);
-  background: rgba(16, 185, 129, 0.15);
-  color: var(--primary-emerald);
+  background: rgba(32, 199, 181, 0.15);
+  color: var(--accent);
   font-size: 11px;
   font-weight: 700;
 }
 
 .percentage-badge.over {
-  background: rgba(52, 211, 153, 0.2);
-  color: var(--primary-emerald-light);
+  background: rgba(94, 234, 212, 0.2);
+  color: var(--accent-light);
 }
 
 /* Sits beside the percentage and carries what the banner below used to say -
@@ -1029,7 +1512,7 @@ body.modal-open {
 .add-person-btn:focus-visible,
 .settings-group-header:focus-visible,
 .person-select-btn:focus-visible {
-  outline: 2px solid var(--primary-emerald);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1055,7 +1538,7 @@ body.modal-open {
 .btn-meeting {
   background: linear-gradient(135deg, var(--activity-meeting), var(--activity-meeting-dark));
   color: #f8fafc;
-  box-shadow: 0 0 18px rgba(59, 130, 246, 0.28);
+  box-shadow: 0 0 18px rgba(129, 140, 248, 0.28);
 }
 
 .btn.full {
@@ -1069,17 +1552,43 @@ body.modal-open {
   padding: 0 12px;
 }
 
+/* Lit from the top like a physical key, not a flat 135-degree wash. The inner
+   highlight is the top edge catching light and the shadow below it is the same
+   light being blocked - that pair is most of what separates a button that looks
+   pressable from a coloured rectangle. */
+/* The gradient stops well short of --accent-dark. Dark ink measures 5.58:1 on
+   the accent and 8.62:1 on its light step, but only 3.09:1 on the dark one - a
+   button whose label passes at the top and fails at the bottom is a button that
+   fails. The lit top edge does the work the darker end used to. */
 .btn-primary {
-  background: linear-gradient(135deg, var(--primary-emerald), var(--primary-emerald-dark));
-  color: #052e22;
-  box-shadow: var(--shadow-glow);
+  background: linear-gradient(180deg, var(--accent-light), var(--accent) 62%);
+  color: var(--on-primary);
+  box-shadow: var(--shadow-glow), inset 0 1px 0 rgba(255, 255, 255, 0.34);
 }
 
 .btn-secondary {
-  background: var(--bg-surface-elevated);
+  background: var(--sheen), var(--bg-surface-elevated);
   border-color: var(--border-subtle);
   color: var(--text-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
+
+/* Each activity button carries its own colour, faintly.
+   Four identical grey rectangles is the shape every dark template ships, and it
+   also throws away a language the app already speaks: the stat row, the week
+   bars and the ring all paint lunch purple and breaks amber. Tinting the icon
+   and letting a little of that colour wash down from the top edge makes the
+   grid readable at a glance without adding a single pixel of height - which the
+   timer view has none of to spare. */
+#btnLunch   { background: linear-gradient(180deg, rgba(236, 72, 153, 0.14), transparent 62%), var(--sheen), var(--bg-surface-elevated); }
+#btnBreak   { background: linear-gradient(180deg, rgba(245, 158, 11, 0.14), transparent 62%), var(--sheen), var(--bg-surface-elevated); }
+#btnMeeting { background: linear-gradient(180deg, rgba(129, 140, 248, 0.14), transparent 62%), var(--sheen), var(--bg-surface-elevated); }
+#btnPause   { background: linear-gradient(180deg, rgba(100, 116, 139, 0.16), transparent 62%), var(--sheen), var(--bg-surface-elevated); }
+
+#btnLunch   .btn-icon { color: var(--activity-lunch); }
+#btnBreak   .btn-icon { color: var(--activity-break); }
+#btnMeeting .btn-icon { color: var(--activity-meeting); }
+#btnPause   .btn-icon { color: var(--activity-paused); }
 
 .btn-danger {
   background: rgba(239, 68, 68, 0.14);
@@ -1136,16 +1645,18 @@ body.modal-open {
 
 /* Jump back to the current period. Hidden while you are already on it, so it
    costs nothing in the common case. */
+/* Right-aligned, arrow last and pointing forward. It is a "catch up to now"
+   control and now is ahead of wherever you have paged back to. */
 .return-chip {
-  align-self: flex-start;
+  align-self: flex-end;
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  padding: 5px 11px 5px 8px;
+  padding: 5px 8px 5px 11px;
   border: 1px solid var(--border-accent);
   border-radius: var(--radius-full);
-  background: rgba(16, 185, 129, 0.1);
-  color: var(--primary-emerald);
+  background: rgba(32, 199, 181, 0.1);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1154,11 +1665,11 @@ body.modal-open {
 
 .return-chip:active {
   transform: scale(0.96);
-  background: rgba(16, 185, 129, 0.18);
+  background: rgba(32, 199, 181, 0.18);
 }
 
 .return-chip:focus-visible {
-  outline: 2px solid var(--primary-emerald);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -1175,12 +1686,14 @@ body.modal-open {
   min-height: 0;
 }
 
+/* ------------------------------------------------------------- week chart */
+
+/* Fixed height on purpose. The bars used to grow into whatever the card was
+   not using, which is why the goal line needed arithmetic against a track that
+   measured zero before first paint. A deterministic track means a week reads
+   the same on every screen and the percentages below always resolve. */
 .histogram-wrapper {
   position: relative;
-  padding-top: var(--histogram-pad-top);
-  flex: 1;
-  min-height: 0;
-  display: flex;
 }
 
 .target-line-indicator {
@@ -1207,7 +1720,7 @@ body.modal-open {
 .target-label {
   font-size: 10px;
   font-weight: 600;
-  color: var(--primary-emerald);
+  color: var(--accent);
   background: var(--bg-surface);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
@@ -1217,7 +1730,8 @@ body.modal-open {
 .dash-line {
   flex: 1;
   height: 0;
-  border-top: 1px dashed rgba(16, 185, 129, 0.45);
+  border-top: 1px dashed var(--accent);
+  opacity: 0.5;
 }
 
 .histogram-bars {
@@ -1225,17 +1739,14 @@ body.modal-open {
   grid-template-columns: repeat(7, 1fr);
   gap: 6px;
   align-items: stretch;
-  flex: 1;
-  min-height: 0;
+  padding-top: var(--histogram-pad-top);
 }
 
 /* A button, not a div: tapping a day opens its log. The three rows are the
-   value caption, the track, and the day label; the track takes the rest, which
-   is what lets the chart grow into the card's spare height. --bar-track-height
-   is now the floor rather than the height. */
+   value caption, the track, and the day label. */
 .bar-column {
   display: grid;
-  grid-template-rows: var(--bar-val-height) minmax(var(--bar-track-height), 1fr) var(--bar-label-height);
+  grid-template-rows: var(--bar-val-height) var(--bar-track-height) var(--bar-label-height);
   justify-items: center;
   gap: var(--bar-gap);
   min-width: 0;
@@ -1254,7 +1765,7 @@ body.modal-open {
 }
 
 .bar-column:focus-visible {
-  outline: 2px solid var(--primary-emerald);
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
@@ -1277,7 +1788,7 @@ body.modal-open {
   width: 100%;
   height: 100%;
   min-height: 0;
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--rest-track);
   border-radius: var(--radius-sm);
 }
 
@@ -1293,11 +1804,11 @@ body.modal-open {
   overflow: hidden;
 }
 
-/* The old `transition: height` never actually ran: renderWeek() replaces the
+/* `transition: height` never actually ran here: renderWeek() replaces the
    whole bar container, so every segment is a brand new node with no previous
    height to animate from. It was pure cost on a property that forces layout.
-   The grow is now a one-shot scaleY on the compositor, which does animate,
-   and the segment's own height is set once at build time. */
+   The grow is a one-shot scaleY on the compositor, which does animate, and the
+   segment's own height is set once at build time. */
 .bar-seg {
   display: block;
   width: 100%;
@@ -1305,7 +1816,7 @@ body.modal-open {
   transform-origin: bottom center;
 }
 
-/* Only when the week on screen actually changed — see renderWeek(). Regrowing
+/* Only when the week on screen actually changed - see renderWeek(). Regrowing
    every bar because someone tapped "Short break" is noise, not polish. */
 .histogram-bars.animate .bar-seg {
   animation: seg-grow var(--motion-slow) var(--ease-out) both;
@@ -1322,7 +1833,7 @@ body.modal-open {
 .seg-lunch   { background: linear-gradient(180deg, var(--activity-lunch), var(--activity-lunch-dark)); }
 
 /* Second channel for the two uncounted activities.
-   Hue alone cannot separate emerald work from amber break for a red-green
+   Hue alone cannot separate teal work from amber break for a red-green
    colourblind reader, and these bars carry no numbers of their own. A diagonal
    hatch on break and lunch makes "does this count towards my 8 hours?"
    answerable without seeing colour at all: solid counts, hatched does not. */
@@ -1343,7 +1854,6 @@ body.modal-open {
     linear-gradient(180deg, var(--activity-lunch), var(--activity-lunch-dark));
 }
 
-
 .bar-day {
   height: var(--bar-label-height);
   display: grid;
@@ -1353,7 +1863,7 @@ body.modal-open {
 }
 
 .bar-column.today .bar-day {
-  color: var(--primary-emerald);
+  color: var(--accent);
   font-weight: 700;
 }
 
@@ -1381,14 +1891,149 @@ body.modal-open {
 .swatch-break   { background: var(--activity-break); }
 .swatch-lunch   { background: var(--activity-lunch); }
 
-/* Must follow the `background` shorthands above — the shorthand resets
-   background-image, so declaring the hatch earlier silently lost it. The
-   legend has to carry the same solid-vs-hatched distinction as the bars or
-   the key does not explain the chart. */
+/* The same second channel the bars carry. Declared after the shorthands above,
+   not before: a `background` shorthand wipes a background-image, and the
+   legend silently losing its hatch while the bars keep theirs is worse than
+   neither having one. */
 .swatch-break,
 .swatch-lunch {
   background-image: repeating-linear-gradient(135deg,
     rgba(0, 0, 0, 0.4) 0 2px, transparent 2px 4px);
+}
+
+/* --------------------------------------------------------------- week donut */
+
+.donut-block {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--sheen), var(--bg-surface);
+}
+
+.dn-chart {
+  position: relative;
+  width: 104px;
+  height: 104px;
+  flex-shrink: 0;
+}
+
+.dn-chart svg {
+  width: 100%;
+  height: 100%;
+  /* Start at twelve o'clock, like both rings on the timer. */
+  transform: rotate(-90deg);
+}
+
+.dn-track,
+.dn-slice {
+  fill: none;
+  stroke-width: 8;
+}
+
+/* The track only shows the ring's shape behind the slices, so it sits a hair
+   thinner than they do. */
+.dn-track {
+  stroke: var(--track-line);
+  stroke-width: 6;
+}
+
+.dn-work    { background: var(--activity-work);    stroke: var(--activity-work); }
+.dn-meeting { background: var(--activity-meeting); stroke: var(--activity-meeting); }
+.dn-break   { background: var(--activity-break);   stroke: var(--activity-break); }
+.dn-lunch   { background: var(--activity-lunch);   stroke: var(--activity-lunch); }
+
+/* Same rule as the old bar legend: colour is never the only channel, so the two
+   uncounted kinds are hatched here as well. Declared after the shorthands above
+   for the reason documented there - a `background` shorthand wipes an image. */
+.swatch.dn-break,
+.swatch.dn-lunch {
+  background-image: repeating-linear-gradient(135deg,
+    rgba(0, 0, 0, 0.4) 0 2px, transparent 2px 4px);
+}
+
+.dn-centre {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  pointer-events: none;
+}
+
+.dn-centre strong {
+  font-family: var(--font-mono);
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.dn-centre small {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--text-muted);
+}
+
+.dn-legend {
+  flex: 1;
+  min-width: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.dn-row {
+  display: grid;
+  grid-template-columns: 9px 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.dn-label {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The percentage is the headline here and the duration is the supporting
+   detail, so they are weighted that way rather than both being plain text. */
+.dn-pct {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.dn-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  min-width: 52px;
+  text-align: right;
+}
+
+.dn-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Under about 340px the donut and four legend rows stop fitting side by side. */
+@media (max-width: 344px) {
+  .donut-block {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dn-chart {
+    align-self: center;
+  }
 }
 
 .chart-note {
@@ -1397,11 +2042,47 @@ body.modal-open {
   color: var(--text-muted);
 }
 
+/* -------------------------------------------------------------- theme pick */
+
+.theme-choice {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.theme-option {
+  min-height: 40px;
+  padding: 0 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--sheen), var(--bg-surface-elevated);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--motion-fast) var(--ease-out), color var(--motion-fast) ease;
+}
+
+.theme-option:active {
+  transform: scale(0.97);
+}
+
+.theme-option.active {
+  border-color: var(--border-accent);
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
 /* ---------------------------------------------------------- summary grid */
 
+/* Not four identical boxes. The first figure is the one people came to the
+   screen for - the hours logged - so it gets the room, the left edge and a
+   bigger number, and the others read as its supporting cast. Four equal cells
+   made the eye scan all four every time to find the one that mattered. */
 .summary-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1.4fr 1fr 1fr 1.15fr;
   gap: 1px;
   background: var(--border-subtle);
   border: 1px solid var(--border-subtle);
@@ -1410,7 +2091,7 @@ body.modal-open {
 }
 
 .summary-grid.three {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1.4fr 1fr 1fr;
 }
 
 .summary-cell {
@@ -1419,8 +2100,24 @@ body.modal-open {
   align-items: center;
   gap: 3px;
   padding: 10px 4px;
-  background: var(--bg-surface);
+  background: var(--sheen), var(--bg-surface);
   text-align: center;
+}
+
+.summary-cell:first-child {
+  align-items: flex-start;
+  padding-left: 12px;
+  text-align: left;
+  /* A hair of the accent bleeding in from the left edge, which is what stops
+     the row reading as a table. */
+  background:
+    linear-gradient(90deg, rgba(32, 199, 181, 0.09), transparent 62%),
+    var(--sheen),
+    var(--bg-surface);
+}
+
+.summary-cell:first-child .summary-value {
+  font-size: 16px;
 }
 
 .summary-label {
@@ -1437,7 +2134,7 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
 }
 
-.summary-value.positive { color: var(--primary-emerald); }
+.summary-value.positive { color: var(--accent); }
 .summary-value.negative { color: var(--amber-warning); }
 
 /* ----------------------------------------------------------------- calendar */
@@ -1472,10 +2169,10 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
 }
 
-.legend-hours.met   { color: var(--primary-emerald); }
+.legend-hours.met   { color: var(--accent); }
 .legend-hours.short { color: var(--amber-warning); }
 
-.dot-completed { background: var(--primary-emerald); box-shadow: 0 0 6px var(--primary-glow); }
+.dot-completed { background: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
 .dot-partial   { background: var(--amber-warning); }
 .dot-off       { background: var(--slate-muted); opacity: 0.45; }
 .dot-weekend   { background: transparent; border: 1px solid var(--slate-muted); }
@@ -1540,7 +2237,7 @@ body.modal-open {
 }
 
 .cal-day-cell:focus-visible {
-  outline: 2px solid var(--primary-emerald);
+  outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
 
@@ -1552,7 +2249,7 @@ body.modal-open {
 
 .cal-day-cell.today {
   border-color: var(--border-accent);
-  background: rgba(16, 185, 129, 0.08);
+  background: rgba(32, 199, 181, 0.08);
 }
 
 .cal-day-cell.weekend .cal-day-num { color: var(--text-muted); }
@@ -1590,7 +2287,7 @@ body.modal-open {
   letter-spacing: -0.2px;
 }
 
-.cal-day-hours.met   { color: var(--primary-emerald); }
+.cal-day-hours.met   { color: var(--accent); }
 .cal-day-hours.short { color: var(--amber-warning); }
 
 /* ------------------------------------------------------------- bottom nav */
@@ -1601,14 +2298,14 @@ body.modal-open {
   left: 50%;
   transform: translateX(-50%);
   width: 100%;
-  max-width: 520px;
+  max-width: var(--app-max);
   z-index: 45;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
   /* The extra bottom padding is the iPhone home indicator: without it the
      nav sits underneath the gesture bar and the last item is unreachable. */
   padding: 8px 6px calc(8px + var(--safe-bottom));
-  background: rgba(18, 18, 18, 0.92);
+  background: var(--chrome-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border-top: 1px solid var(--border-subtle);
@@ -1637,7 +2334,7 @@ body.modal-open {
 }
 
 .nav-item.active {
-  color: var(--primary-emerald);
+  color: var(--accent);
 }
 
 /* Small lift on the selected tab's icon. One transform on one 19px element. */
@@ -1687,41 +2384,38 @@ body.modal-open {
   to { transform: translateY(0); opacity: 1; }
 }
 
-/* Settings is a destination rather than a glance, so on a phone it takes the
-   whole screen: a 88vh card floating on a dimmed backdrop wasted the edges and
-   still needed a scroll. Above 560px the shared rule re-centres it and the
-   width cap below turns it back into a normal card. */
+/* Settings is centred at every width. It used to be a full-bleed sheet on a
+   phone, which is why it had to open a group by default - a screen of collapsed
+   rows floating edge to edge reads as an empty page. As a card with air around
+   it, the collapsed list is the content, and each group opens into the space
+   the card grows to fill. */
 .modal-overlay.fullscreen {
-  padding: 0;
-  align-items: stretch;
-  /* The sheet covers the overlay completely, so blurring what is behind it is
-     a full-screen GPU pass nobody can see. */
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
+  align-items: center;
+  padding: 14px;
+  padding-bottom: calc(14px + var(--safe-bottom));
 }
 
-/* Opaque rather than the usual translucent glass: nothing shows through a
-   full-screen sheet anyway, and the sticky header below has to paint the same
-   colour as the panel it sits on. */
+/* Opaque rather than the usual translucent glass: the sticky header below has
+   to paint the same colour as the panel it sits on, and a header you can see
+   the groups sliding under looks broken. Height follows the content up to a
+   ceiling, so a card with everything collapsed is short and a card with a group
+   open grows into the screen instead of always owning all of it. */
 .modal-card.sheet-full {
-  max-width: none;
-  max-height: none;
-  height: 100%;
-  border-radius: 0;
-  border-left: 0;
-  border-right: 0;
+  max-width: 480px;
+  max-height: 86dvh;
+  height: auto;
+  border-radius: var(--radius-lg);
   background: var(--bg-surface);
-  box-shadow: none;
   display: flex;
   flex-direction: column;
-  padding: calc(14px + var(--safe-top)) 16px calc(18px + var(--safe-bottom));
+  padding: 16px;
 }
 
 /* The title stays put while the groups scroll: with six groups the close
    button was otherwise several screens up. */
 .sheet-full .modal-header {
   position: sticky;
-  top: calc(-14px - var(--safe-top));
+  top: -16px;
   z-index: 1;
   margin: 0 -16px 12px;
   padding: 0 16px 12px;
@@ -1741,7 +2435,7 @@ body.modal-open {
 }
 
 .settings-body[data-only="reminders"] [data-group="reminders"],
-.settings-body[data-only="workday"] [data-group="workday"],
+.settings-body[data-only="timers"] [data-group="timers"],
 .settings-body[data-only="profile"] [data-group="profile"],
 .settings-body[data-only="account"] [data-group="account"],
 .settings-body[data-only="data"] [data-group="data"],
@@ -1771,29 +2465,15 @@ body.modal-open {
   width: 100%;
 }
 
-/* Back to a normal centred card once there is room for one. */
+/* A little more room to breathe once the screen has it. */
 @media (min-width: 560px) {
-  .modal-overlay.fullscreen {
-    padding: 16px;
-    padding-bottom: calc(16px + var(--safe-bottom));
-    align-items: center;
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-  }
-
   .modal-card.sheet-full {
-    max-width: 480px;
-    max-height: 88dvh;
-    height: auto;
-    border-radius: var(--radius-lg);
-    border-left: 1px solid var(--border-subtle);
-    border-right: 1px solid var(--border-subtle);
-    box-shadow: var(--shadow-lg), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    padding: 18px 16px;
+    max-width: 520px;
+    padding: 18px;
   }
 
-  /* Stays opaque here too: the sticky header has to paint the same colour as
-     the panel, and a translucent one would show the groups sliding under it. */
+  /* Stays opaque: the sticky header has to paint the same colour as the panel,
+     and a translucent one would show the groups sliding under it. */
   .sheet-full .modal-header {
     top: -18px;
   }
@@ -1899,7 +2579,7 @@ input:-webkit-autofill:focus {
 input:focus {
   outline: none;
   border-color: var(--border-accent);
-  box-shadow: 0 0 0 3px var(--primary-glow);
+  box-shadow: 0 0 0 3px var(--accent-glow);
 }
 
 .input-pair {
@@ -1973,8 +2653,8 @@ input:focus {
   font-weight: 600;
 }
 
-.detail-val.accent   { color: var(--primary-emerald); }
-.detail-val.positive { color: var(--primary-emerald); }
+.detail-val.accent   { color: var(--accent); }
+.detail-val.positive { color: var(--accent); }
 .detail-val.negative { color: var(--amber-warning); }
 
 .empty-note {
@@ -2084,8 +2764,8 @@ input:focus {
   height: 32px;
   flex-shrink: 0;
   border-radius: var(--radius-sm);
-  background: rgba(16, 185, 129, 0.12);
-  color: var(--primary-emerald);
+  background: rgba(32, 199, 181, 0.12);
+  color: var(--accent);
 }
 
 .settings-group-text {
@@ -2173,7 +2853,7 @@ input:focus {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.7px;
-  color: var(--primary-emerald);
+  color: var(--accent);
   margin-bottom: 10px;
 }
 
@@ -2209,7 +2889,7 @@ input:focus {
   width: 20px;
   height: 20px;
   margin-top: 2px;
-  accent-color: var(--primary-emerald);
+  accent-color: var(--accent);
   flex-shrink: 0;
 }
 
@@ -2248,7 +2928,7 @@ input:focus {
 }
 
 .perm-card.granted {
-  background: rgba(16, 185, 129, 0.08);
+  background: rgba(32, 199, 181, 0.08);
   border-color: var(--border-accent);
 }
 
@@ -2273,8 +2953,8 @@ input:focus {
 }
 
 .perm-card.granted .perm-status-dot {
-  background: var(--primary-emerald);
-  box-shadow: 0 0 7px var(--primary-glow);
+  background: var(--accent);
+  box-shadow: 0 0 7px var(--accent-glow);
 }
 
 .perm-card.denied .perm-status-dot {
@@ -2400,7 +3080,7 @@ input:focus {
   height: 56px;
   margin: 0 auto 14px;
   border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, var(--primary-emerald), var(--primary-emerald-dark));
+  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
   color: #06231a;
 }
 
@@ -2448,7 +3128,7 @@ input:focus {
   background: none;
   border: none;
   padding: 4px 2px;
-  color: var(--primary-emerald);
+  color: var(--accent);
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -2502,8 +3182,81 @@ input:focus {
   transform: translate(-50%, 0);
 }
 
-.toast.ok   { border-color: var(--border-accent); color: var(--primary-emerald-light); }
+.toast.ok   { border-color: var(--border-accent); color: var(--accent-light); }
 .toast.warn { border-color: rgba(245, 158, 11, 0.45); color: #fcd9a0; }
+
+/* --------------------------------------------------------------- walkthrough */
+
+/* The overlay is transparent but present, so it swallows taps meant for the
+   app underneath while the tour is running. The dimming is not here: it is the
+   spotlight's outward box-shadow, which is also what cuts the hole. */
+.tour-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+}
+
+/* Positioned with transform rather than top/left so moving between steps is a
+   compositor job. The size still changes per step — once per step, not per
+   frame, which is the line that matters. */
+.tour-spotlight {
+  position: fixed;
+  top: 0;
+  left: 0;
+  border-radius: var(--radius-md);
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.74);
+  transition: transform var(--motion-base) var(--ease-out);
+  pointer-events: none;
+}
+
+/* Placed by ui.js once per tour, not per step: only the spotlight moves. It
+   cannot be a plain bottom sheet in CSS because on a landscape phone the strip
+   above the nav is 50px tall and the seat has to be measured. */
+.tour-card {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: min(400px, calc(100vw - 24px));
+  padding: 15px 16px 13px;
+}
+
+.tour-count {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.tour-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin-top: 3px;
+}
+
+.tour-text {
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--text-secondary);
+  margin-top: 5px;
+}
+
+.tour-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 13px;
+}
+
+/* On a short screen there is no band the card fits in, so it ends up over the
+   dial. Every pixel it loses here is a pixel of the thing it is describing that
+   the reader gets back. */
+@media (max-height: 620px) {
+  .tour-card { padding: 11px 13px 10px; }
+  .tour-actions { margin-top: 10px; }
+}
 
 /* ----------------------------------------------------------- wider screens */
 
@@ -2516,8 +3269,102 @@ input:focus {
     align-items: center;
   }
 
+  /* Still fluid. A flat 38px here used to win over the clamp on a landscape
+     phone — wide enough to match, far too short to spend the height on. */
   .timer-digits {
-    font-size: 38px;
+    font-size: clamp(30px, 4.4vh, 42px);
+  }
+}
+
+/* Tablet and desktop. Nothing is re-laid out: every row in the app is already
+   fr-based or flex, so widening the column is all that "use the screen" means
+   here. The ring is the one thing that would otherwise stay phone-sized in the
+   middle of a large display. */
+@media (min-width: 760px) {
+  :root {
+    --app-max: 640px;
+    --ring-size: clamp(160px, min(30vh, 40vw), 260px);
+  }
+}
+
+@media (min-width: 1100px) {
+  :root {
+    --app-max: 720px;
+  }
+}
+
+/* Landscape phone: wide and very short. The vertical stack cannot fit here at
+   any clamp, and the height queries above have already given up everything
+   they can — so the ring moves beside the card instead of above it and the
+   height problem becomes a width one, which this screen has to spare. */
+@media (orientation: landscape) and (max-height: 640px) and (min-width: 660px) {
+  :root {
+    --ring-size: clamp(120px, min(58vh, 34vw), 240px);
+    /* Take the full width here. Height is the scarce resource on this screen
+       and width is free, so a wider column is what turns three rows of buttons
+       into two - the 520px column left a third of the screen empty and still
+       pushed End day under the nav. */
+    --app-max: 100vw;
+    /* Chrome shrinks with it: on a screen this short the header and the nav
+       together were a third of the viewport. */
+    --nav-height: 50px;
+  }
+
+  .app-header {
+    padding: calc(5px + var(--safe-top)) 16px 5px;
+  }
+
+  .nav-item {
+    min-height: 36px;
+    padding: 3px 2px;
+  }
+
+  /* The hint line under the dial is a sentence about notification permission,
+     and it is repeated verbatim in Settings. It is the cheapest row to lose. */
+  .reminder-status {
+    display: none;
+  }
+
+  .timer-card {
+    display: grid;
+    grid-template-columns: var(--ring-size) minmax(0, 1fr);
+    grid-template-areas:
+      "ring head"
+      "ring banner"
+      "ring stats"
+      "ring actions"
+      "ring clock"
+      "ring hint";
+    column-gap: 18px;
+    align-content: center;
+  }
+
+  .timer-card-header       { grid-area: head; }
+  .progress-ring-container { grid-area: ring; align-self: center; }
+  .break-banner            { grid-area: banner; }
+  .session-stats-bar       { grid-area: stats; }
+  .action-buttons-grid     { grid-area: actions; grid-template-columns: repeat(3, 1fr); }
+  .clock-row               { grid-area: clock; }
+  .reminder-status         { grid-area: hint; }
+
+  /* The stat row comes back during a break: the height queries dropped it
+     because the vertical stack needed the room, and this layout does not. The
+     clock row stays dropped - it is the one thing here that never changes and
+     it is repeated in the day details. */
+  [data-state="BREAK"] .session-stats-bar,
+  [data-state="LUNCH"] .session-stats-bar {
+    display: grid;
+  }
+}
+
+/* The first row to go on a short screen, and it goes only once the day is
+   running. It is a sentence about notification permission, repeated verbatim in
+   Settings, and while the state is IDLE there is room for it and it is the most
+   useful thing on the card. Once a shift starts, End day matters more.
+   Worth 30px, which is what a 360x640 phone was short by in WORKING. */
+@media (max-height: 700px) {
+  .app-container:not([data-state="IDLE"]) .reminder-status {
+    display: none;
   }
 }
 

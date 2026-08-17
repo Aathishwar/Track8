@@ -174,9 +174,9 @@ in the stylesheet used to break that rule and both were doing real damage: a `dr
 on `.ring-fill` that re-rasterised on every frame of the once-a-second dashoffset
 transition, and `transition: height` on `.bar-seg`, which never even fired because
 `renderWeek()` replaces every bar node. `backdrop-filter` is kept only on the header, the
-bottom nav and the modal scrim, where there is genuinely content behind the surface — the
-cards sit on a flat background, so blurring there cost a full-width GPU pass to produce a
-pixel-identical result.
+bottom nav and the modal scrim, where content genuinely moves behind the surface — what is
+behind a card is the ambient wash on `body::before`, a gradient soft enough that blurring it
+returns nearly the same pixels for the cost of a full-width GPU pass on every scrolled frame.
 
 **Entry animations are gated on the data actually changing.** `renderAll()` runs on every
 button press. `renderWeek()` and `renderCalendar()` compare against `lastWeekKey` /
@@ -190,8 +190,19 @@ bars keep theirs, which is worse than having neither.
 
 **Colour is never the only channel.** Work and meetings are solid, breaks and lunch are
 hatched, so "does this count towards my 8 hours?" survives red-green colour blindness.
-`--text-muted` is pinned at a measured 4.6:1 against `--bg-surface`; it is the colour of
-most small text in the app, and the previous value measured 3.45:1.
+`--text-muted` is pinned against `--bg-surface` and measured, never guessed: 5.8:1 today,
+4.6:1 before the surfaces were re-graded, and 3.45:1 in the version that failed AA. It is
+the colour of most small text in the app, so it is the first thing to re-measure whenever a
+surface changes.
+
+**The surfaces are tinted, not neutral grey.** `--bg-primary` and friends carry a few
+degrees of green so they belong to the emerald the app is built on; `#121212` on `#1e1e1e`
+is the palette every framework ships with and it reads as unstyled. Depth comes from three
+cheap, static things: the two-hue ambient wash on `body::before`, the `--sheen` gradient
+that lights the top edge of every raised surface, and a paired shadow. None of them
+animate. The activity colours are also the button colours — lunch is purple on the stat
+row, the week bar *and* the Lunch button — so the palette carries meaning rather than
+decoration.
 
 **The `vibrate` option on a notification is not a vibration API.** On Android an installed
 web app's notifications go through a system notification channel, and whether that channel
@@ -200,6 +211,27 @@ vibrates belongs to the user and the OEM. A reminder can appear, make a sound, a
 but only while the page is visible, because Chrome ignores it from a hidden page. Both are
 set; neither alone is sufficient. iOS has no vibration API at all, so the settings test
 reports what actually happened instead of claiming success.
+
+**A notification body has no markup.** No HTML, no markdown, no styling of any kind — the
+title is the only line the OS draws in bold. Anything that has to stand out therefore lives
+in the title, which is why the pinned notification says "back by 14:35" up there and the nag
+carries the elapsed time. Do not add markup to a body expecting it to render; it prints
+verbatim.
+
+**The lock-screen card rides on the keep-alive track.** There is no web API for a lock-screen
+widget. What there is is the Media Session API, which describes *playing audio* to the OS —
+so the card exists only while the silent track is playing, and `lockScreenControls` therefore
+holds that track for the whole shift rather than only for breaks. That is a real battery cost
+and the reason it is a setting, and the reason it is gated on `keepAliveEnabled` in both the
+UI and `lockScreenEnabled()`. `startKeepAlive(fresh)` takes a flag because of this: the
+lock-screen path re-arms the track on every tick, and clearing `keepAliveInterrupted` there
+would wipe the evidence that the phone killed us before `onBecameVisible` ever read it.
+
+**Nothing reached from the lock screen may call `confirm()`.** The page is behind a locked
+screen; a dialog nobody can see blocks the handler and the button does nothing. `actEndDay`
+takes an `unattended` flag for exactly that path, and it is safe because ending a day is
+recoverable through Reopen. The transport buttons also toggle rather than fire once — there
+is one Break button, so it has to end the break it started.
 
 **`pause` on a media element is delivered asynchronously.** The keep-alive watches for the
 phone suspending it by listening for a `pause` it did not ask for. Setting an

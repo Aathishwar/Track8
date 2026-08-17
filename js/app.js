@@ -315,14 +315,21 @@
       : UI.shortDuration(meetingMs) + ' meeting logged. Back on the clock.', 'ok');
   }
 
-  function actEndDay() {
+  /**
+   * @param unattended  True when the request came from the lock screen. A
+   *   `confirm()` cannot be answered by someone whose phone is locked - it
+   *   would block on a dialog nobody can see - so that path skips it. Ending
+   *   the day is recoverable either way: Reopen puts the clock back on without
+   *   crediting the gap.
+   */
+  function actEndDay(unattended) {
     var state = currentState();
     if (state === 'IDLE' || state === S.ENDED) return;
 
     var summary = TL.summarize(currentDay(), Date.now());
     var message = 'End the day at ' + UI.clockTime(Date.now()) + ' with ' +
       UI.hm(summary.creditedMs) + ' logged?';
-    if (!confirm(message)) return;
+    if (unattended !== true && !confirm(message)) return;
 
     transition(S.ENDED);
     Notify.onBreakEnded();
@@ -487,6 +494,14 @@
 
   /* -------------------------------------------------------------- settings */
 
+  /** A minutes box: blank or nonsense keeps what was there, 0 means never. */
+  function minutesField(input, fallback) {
+    if (input.value === '') return fallback;
+    var value = Number(input.value);
+    if (!isFinite(value) || value < 0) return fallback;
+    return Math.round(value);
+  }
+
   function saveSettings() {
     var hours = Number(el.setDailyTarget.value);
     if (!isFinite(hours) || hours <= 0 || hours > 24) {
@@ -502,9 +517,21 @@
       lunchAlertMinutes: Number(el.setLunchAlert.value) || 30,
       lunchRepeatMinutes: Number(el.setLunchRepeat.value) || 5,
       keepAliveEnabled: el.setKeepAlive.checked,
-      vibrate: el.setVibrate.checked
+      lockScreenControls: el.setLockScreen.checked,
+      vibrate: el.setVibrate.checked,
+      // A blank field is not a zero. Zero means "never nag me about this" and
+      // has to survive being typed; an empty box means the person cleared it on
+      // the way to typing something else, so it keeps the current value.
+      stretchAlertMinutes: minutesField(el.setStretchAlert, Store.settings().stretchAlertMinutes),
+      stretchRepeatMinutes: Math.max(1, minutesField(el.setStretchRepeat, Store.settings().stretchRepeatMinutes)),
+      pauseAlertMinutes: minutesField(el.setPauseAlert, Store.settings().pauseAlertMinutes),
+      meetingAlertMinutes: minutesField(el.setMeetingAlert, Store.settings().meetingAlertMinutes),
+      overtimeReminder: el.setOvertimeReminder.checked
     });
 
+    // Only the master switch stops the track here. Turning the card off while
+    // a break is running must not kill the track that break's reminder needs -
+    // the next tick releases it if nothing else wants it.
     if (!el.setKeepAlive.checked) Notify.stopKeepAlive();
     renderAll();
     // Collapsed group headers quote these values, so they have to move too.
@@ -683,7 +710,53 @@
         el.signinName.value = person.name;
       }
       if (el.signinCodeForm.hidden && el.signinEmailForm.hidden) showSigninStep('email');
+    } else {
+      // The one moment we know nothing is about to cover the screen. Sync
+      // always answers — with a server, without one, or offline — so this runs
+      // on every launch, and what it opens only fires on the first.
+      maybeOnboard();
     }
+  }
+
+  /**
+   * First launch: ask for the timers, then walk through the app.
+   *
+   * In that order deliberately. The walkthrough points at a dial that is about
+   * to be measured against whatever target is set here, and being asked for
+   * three numbers before anything has been explained is a shorter first screen
+   * than being shown seven and then asked to go and find them.
+   */
+  function maybeOnboard() {
+    if (!Store.seen('setup')) {
+      if (document.querySelector('.modal-overlay.open')) return;
+      UI.fillSetupForm();
+      UI.openModal(el.setupModal);
+      return;
+    }
+    UI.maybeStartTour();
+  }
+
+  function finishSetup(save) {
+    if (save) {
+      var target = Number(el.setupTarget.value);
+      if (!isFinite(target) || target <= 0 || target > 24) {
+        UI.toast('Hours a day must be between 0 and 24.', 'warn');
+        return;
+      }
+      Store.updateSettings({
+        dailyTargetMinutes: Math.round(target * 60),
+        breakAlertMinutes: Math.max(1, Number(el.setupBreak.value) || 15),
+        lunchAlertMinutes: Math.max(1, Number(el.setupLunch.value) || 30)
+      });
+      renderAll();
+      UI.renderSettingsSummaries(Notify);
+    }
+
+    Store.markSeen('setup');
+    UI.closeModal(el.setupModal);
+    // Straight into the walkthrough, which is the other thing this launch owes
+    // the user. closeModal hands focus back first, so this cannot race it.
+    UI.maybeStartTour();
   }
 
   function sendSigninCode(event) {
@@ -1009,9 +1082,13 @@
     el.btnMeeting.addEventListener('click', actMeeting);
     el.btnLogMeeting.addEventListener('click', actLogMeeting);
     el.btnEndMeeting.addEventListener('click', actEndMeeting);
-    el.btnEnd.addEventListener('click', actEndDay);
+    el.btnEnd.addEventListener('click', function () { actEndDay(false); });
     el.btnReopen.addEventListener('click', actReopen);
     el.btnEditToday.addEventListener('click', function () { openDayEditor(activeDayKey); });
+    el.dialToggle.addEventListener('click', function () {
+      UI.toggleDialMode();
+      renderAll();
+    });
     el.breakBannerAction.addEventListener('click', actResume);
 
     // Views
@@ -1150,9 +1227,56 @@
     });
 
     [el.setDailyTarget, el.setBreakAlert, el.setBreakRepeat, el.setLunchAlert, el.setLunchRepeat,
-      el.setKeepAlive, el.setVibrate].forEach(function (input) {
+      el.setStretchAlert, el.setStretchRepeat, el.setPauseAlert, el.setMeetingAlert,
+      el.setOvertimeReminder, el.setKeepAlive, el.setLockScreen, el.setVibrate].forEach(function (input) {
       input.addEventListener('change', saveSettings);
     });
+    // Easter egg: five taps on the logo swap the reminder wording to Tanglish,
+    // and five more put it back. Not in the settings screen on purpose - the
+    // default has to be a plain reminder that anyone can act on.
+    var LOGO_TAPS = 5;
+    var logoTaps = 0;
+    var logoTapTimer = null;
+    el.brandLogo.addEventListener('click', function () {
+      clearTimeout(logoTapTimer);
+      logoTaps++;
+      logoTapTimer = setTimeout(function () { logoTaps = 0; }, 2500);
+
+      if (logoTaps < LOGO_TAPS) {
+        // Silent for the first two, so an ordinary tap on the logo does not
+        // announce a secret. From three on it counts down, which is the only
+        // way anyone finds this without being told.
+        var left = LOGO_TAPS - logoTaps;
+        if (logoTaps >= 3) UI.toast(left + ' more tap' + (left === 1 ? '' : 's') + '…', 'info');
+        return;
+      }
+
+      logoTaps = 0;
+      var on = !Store.settings().tanglishReminders;
+      Store.updateSettings({ tanglishReminders: on });
+      UI.renderTanglishState();
+      UI.toast(on
+        ? '🎉 Tanglish reminders on. Vaanga, vela pakkalam!'
+        : 'Reminders back to plain English.', 'ok');
+    });
+
+    // Theme picker. Delegated, so the three buttons need no individual wiring.
+    el.settingsBody.addEventListener('click', function (event) {
+      var option = event.target.closest('[data-theme-choice]');
+      if (!option) return;
+      Store.updateSettings({ theme: option.getAttribute('data-theme-choice') });
+      UI.applyTheme();
+      UI.renderSettingsSummaries(Notify);
+    });
+
+    el.setupSaveBtn.addEventListener('click', function () { finishSetup(true); });
+    el.setupSkipBtn.addEventListener('click', function () { finishSetup(false); });
+
+    el.replayTourBtn.addEventListener('click', function () {
+      UI.closeModal(el.settingsModal);
+      UI.startTour();
+    });
+
     el.savePersonBtn.addEventListener('click', savePersonEdit);
     el.deletePersonBtn.addEventListener('click', deleteCurrentPerson);
 
@@ -1281,6 +1405,8 @@
 
     bind();
     UI.showView('timer');
+    UI.applyTheme();
+    UI.renderTanglishState();
     renderAll();
 
     watchPermission();
@@ -1294,7 +1420,26 @@
     });
     Sync.init();
 
-    Notify.init({ onResumeRequest: actResume }).then(function (registration) {
+    // The lock-screen card's buttons. Each one is the same function the timer
+    // screen's button calls, so a tap from the lock screen is indistinguishable
+    // from a tap in the app - it saves, re-renders and re-arms identically.
+    // The transport buttons toggle, because the lock screen has one of each and
+    // the answer to "what does Break do while I am on a break?" has to be
+    // "ends it" rather than nothing.
+    Notify.init({
+      onResumeRequest: actResume,
+      onPlayRequest: function () {
+        if (currentState() === 'IDLE') actStart(); else actResume();
+      },
+      onPauseRequest: actPause,
+      onBreakRequest: function () {
+        if (currentState() === S.BREAK) actResume(); else actBreak();
+      },
+      onLunchRequest: function () {
+        if (currentState() === S.LUNCH) actResume(); else actLunch();
+      },
+      onEndDayRequest: function () { actEndDay(true); }
+    }).then(function (registration) {
       UI.renderReminderStatus(Notify);
       consumeLaunchAction();
 

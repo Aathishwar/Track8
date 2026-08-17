@@ -14,6 +14,11 @@
 
   var STORAGE_KEY = 'track8_attendance_app_v2';
   var LEGACY_KEY = 'track8_attendance_app_v1';
+  // Deliberately outside the synced state: "has this browser been shown the
+  // walkthrough" is about this device, not this account. Syncing it would mean
+  // a new phone silently skips the setup and the tour because a laptop already
+  // saw them.
+  var SEEN_PREFIX = 'track8_seen_';
   var SCHEMA_VERSION = 2;
 
   var DEFAULT_SETTINGS = {
@@ -22,9 +27,27 @@
     breakRepeatMinutes: 5,     // then every this many minutes
     lunchAlertMinutes: 30,     // first nudge after this much lunch
     lunchRepeatMinutes: 5,
+    // A pause is uncounted time nobody meant to leave running, so it nags
+    // later than a break but does nag.
+    pauseAlertMinutes: 20,
+    pauseRepeatMinutes: 10,
+    // Meetings and long stretches at the desk are both credited time. These are
+    // nudges, not corrections, so they start late and repeat slowly.
+    meetingAlertMinutes: 60,
+    meetingRepeatMinutes: 30,
+    stretchAlertMinutes: 120,
+    stretchRepeatMinutes: 30,
+    overtimeReminder: true,    // tell me when the daily target is reached
+    overtimeRepeatMinutes: 30,
     notificationsEnabled: false,
     keepAliveEnabled: true,    // silent-audio trick to survive screen-off
-    vibrate: true
+    lockScreenControls: true,  // media-style card on the lock screen; needs the above
+    vibrate: true,
+    dialShowsRemaining: false, // dial counts up by default, down when tapped
+    theme: 'system',           // 'system' | 'dark' | 'light'
+    // Off by default, and deliberately not in the settings screen: reminders
+    // are plain English until someone finds the five-tap easter egg.
+    tanglishReminders: false
   };
 
   var state = null;
@@ -346,6 +369,19 @@
     return null;
   }
 
+  /* One-time things this device has been shown: 'setup', 'tour'.
+
+     Storage can be blocked entirely (private mode, a locked-down WebView). A
+     read that throws claims it was already seen, so the failure mode is "no
+     walkthrough" rather than "the walkthrough on every single launch". */
+  function seen(name) {
+    try { return localStorage.getItem(SEEN_PREFIX + name) === '1'; } catch (e) { return true; }
+  }
+
+  function markSeen(name) {
+    try { localStorage.setItem(SEEN_PREFIX + name, '1'); } catch (e) { /* nothing to do */ }
+  }
+
   function exportJSON() {
     return JSON.stringify(get(), null, 2);
   }
@@ -395,6 +431,8 @@
     putDay: putDay,
     deleteDay: deleteDay,
     findOpenDay: findOpenDay,
+    seen: seen,
+    markSeen: markSeen,
     exportJSON: exportJSON,
     importJSON: importJSON
   };

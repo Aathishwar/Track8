@@ -61,8 +61,8 @@
   // ENDED and IDLE are not here: there is no segment running.
   var SEGMENT_STATES = { BREAK: true, LUNCH: true, MEETING: true, PAUSED: true };
 
-  // Bottom-to-top order of the stacked week bars. Work sits at the bottom so
-  // the goal line, measured from the baseline, lands on the credited portion.
+  // Bottom to top in a week bar: the two credited kinds first, so the goal
+  // line sits on top of exactly the time it measures.
   var STACK_ORDER = [
     { key: 'workMs', klass: 'seg-work', label: 'Work' },
     { key: 'meetingMs', klass: 'seg-meeting', label: 'Meetings' },
@@ -88,6 +88,15 @@
     var m = Math.floor((total % 3600) / 60);
     var s = total % 60;
     return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+  }
+
+  /** "5:42" — a countdown that visibly moves every second. Hours if it needs them. */
+  function ms(value) {
+    var total = Math.max(0, Math.round(value / 1000));
+    var h = Math.floor(total / 3600);
+    var m = Math.floor((total % 3600) / 60);
+    var s = total % 60;
+    return (h ? h + ':' + String(m).padStart(2, '0') : String(m)) + ':' + String(s).padStart(2, '0');
   }
 
   /** "6h 32m" for totals people read rather than watch. */
@@ -156,7 +165,7 @@
 
   function cache() {
     [
-      'appRoot', 'brandTargetBadge', 'personSelectBtn', 'headerAvatar', 'currentPersonName',
+      'appRoot', 'brandLogo', 'brandTargetBadge', 'personSelectBtn', 'headerAvatar', 'currentPersonName',
       'personDropdown', 'personList', 'openAddPersonModal', 'notifyBtn', 'notifyDot',
       'viewTimer', 'viewWeek', 'viewCalendar',
       'currentDayName', 'currentFullDate', 'statusPill', 'statusText',
@@ -169,7 +178,7 @@
       'btnReopen', 'btnEditToday',
       'clockInText', 'clockOutText',
       'openShiftBanner', 'openShiftText', 'openShiftEndBtn', 'openShiftDismissBtn',
-      'weeklyAverageText', 'histogramBars', 'weekRangeText', 'weekHeading',
+      'weeklyAverageText', 'histogramBars', 'weekDonut', 'weekRangeText', 'weekHeading',
       'weekTotalText', 'weekTargetText', 'weekBalanceText',
       'prevWeekBtn', 'nextWeekBtn', 'thisWeekBtn', 'thisMonthBtn',
       'calendarMonthTitle', 'calendarDays', 'prevMonthBtn', 'nextMonthBtn',
@@ -183,10 +192,12 @@
       'settingsModal', 'closeSettingsModal', 'openSettingsBtn', 'settingsBody',
       'settingsTitle', 'showAllSettingsBtn',
       'setDailyTarget', 'setBreakAlert', 'setBreakRepeat', 'setLunchAlert', 'setLunchRepeat',
-      'setKeepAlive', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
+      'setStretchAlert', 'setStretchRepeat', 'setPauseAlert', 'setMeetingAlert',
+      'setOvertimeReminder', 'sumTimers',
+      'setKeepAlive', 'setLockScreen', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
       'permCard', 'permTitle', 'permSteps', 'permSite', 'permSiteUrl', 'copySiteBtn', 'recheckNotifyBtn',
       'keepAliveWarning', 'batterySteps', 'vibrateNote', 'pushStatus',
-      'sumReminders', 'sumWorkday', 'sumProfile', 'sumInstall', 'sumAccount',
+      'sumReminders', 'sumProfile', 'sumInstall', 'sumAccount', 'sumAppearance',
       'signinScreen', 'signinEmailForm', 'signinCodeForm', 'signinEmail', 'signinCode', 'signinName',
       'signinSendBtn', 'signinVerifyBtn', 'signinResendBtn', 'signinBackBtn',
       'signinSentTo', 'signinError',
@@ -195,7 +206,11 @@
       'sendNewEmailCodeBtn', 'confirmNewEmailBtn', 'cancelEmailChangeBtn', 'emailChangeNote',
       'renamePersonInput', 'renamePersonRole', 'savePersonBtn', 'deletePersonBtn',
       'exportExcelBtn', 'exportBtn', 'importBtn', 'importFileInput', 'installBtn', 'installHint',
-      'progressRingContainer', 'toastHost'
+      'progressRingContainer', 'toastHost',
+      'tourOverlay', 'tourSpotlight', 'tourCard', 'tourCount', 'tourTitle', 'tourText',
+      'tourSkipBtn', 'tourNextBtn', 'replayTourBtn',
+      'dialToggle', 'dialHourglass', 'restTrack', 'restFill',
+      'setupModal', 'setupTarget', 'setupBreak', 'setupLunch', 'setupSaveBtn', 'setupSkipBtn'
     ].forEach(function (id) {
       el[id] = document.getElementById(id);
     });
@@ -290,6 +305,247 @@
    * dial. The percentage keeps its own meaning throughout, because the ring it
    * annotates is always the day.
    */
+  var lastSand = null;
+  var lastDialMode = null;
+
+  var REST_RADIUS = 80;
+  var REST_CIRCUMFERENCE = 2 * Math.PI * REST_RADIUS;
+  var lastRestSince = null;
+  var lastRestLap = -1;
+
+  // Three laps and no more. Past that the ring says the same thing every lap -
+  // "you are a very long way over" - and a counter nobody reads is worse than
+  // a ring that has visibly stopped caring.
+  var REST_MAX_LAPS = 3;
+
+  /**
+   * The inner arc: this break, against the allowance the user set.
+   *
+   * One full lap *is* the allowance, so the ring closing is the reminder
+   * landing. Going over starts a second lap in a hotter colour, and a third is
+   * where it stops - the shape carries "how far over" without a number.
+   */
+  function renderRestArc(summary) {
+    if (!el.restFill || !el.restTrack) return;
+
+    var settings = Store.settings();
+    var allowanceMinutes = 0;
+    if (summary.state === 'BREAK') allowanceMinutes = settings.breakAlertMinutes;
+    else if (summary.state === 'LUNCH') allowanceMinutes = settings.lunchAlertMinutes;
+    else if (summary.state === 'PAUSED') allowanceMinutes = settings.pauseAlertMinutes;
+
+    // setAttribute, not `.hidden`. `hidden` is defined on HTMLElement and these
+    // two are SVGElements, so `el.restFill.hidden = false` quietly created a
+    // property on the object and left the attribute - and therefore the
+    // `[hidden] { display: none }` rule - exactly where it was. The arc was
+    // never once painted, and a check that read the same property back read the
+    // value it had just written and called it a pass.
+    if (!allowanceMinutes || allowanceMinutes <= 0) {
+      el.restFill.setAttribute('hidden', '');
+      el.restTrack.setAttribute('hidden', '');
+      lastRestSince = null;
+      lastRestLap = -1;
+      return;
+    }
+
+    el.restFill.removeAttribute('hidden');
+    el.restTrack.removeAttribute('hidden');
+    el.restTrack.style.strokeDasharray = REST_CIRCUMFERENCE;
+
+    // A new break: play the sweep-up once. Keyed on the moment the segment
+    // began, so a reload mid-break adopts it without re-animating.
+    if (lastRestSince !== summary.openSince) {
+      lastRestSince = summary.openSince;
+      lastRestLap = -1;
+      el.restFill.classList.remove('arming');
+      void el.restFill.getBoundingClientRect().width;
+      el.restFill.classList.add('arming');
+    }
+
+    var ratio = summary.openMs / (allowanceMinutes * 60000);
+    var lap = Math.min(REST_MAX_LAPS - 1, Math.floor(ratio));
+    var withinLap = lap >= REST_MAX_LAPS - 1 ? Math.min(1, ratio - lap) : ratio - lap;
+
+    el.restFill.style.strokeDasharray = REST_CIRCUMFERENCE;
+    el.restFill.style.strokeDashoffset = REST_CIRCUMFERENCE - REST_CIRCUMFERENCE * withinLap;
+
+    // Each lap is a step hotter. The transition has to be cut for the frame the
+    // lap rolls over on, or the arc animates backwards around the whole circle
+    // to reach its new starting point.
+    if (lap !== lastRestLap) {
+      lastRestLap = lap;
+      el.restFill.classList.add('lap-reset');
+      global.setTimeout(function () { el.restFill.classList.remove('lap-reset'); }, 60);
+    }
+    el.restFill.classList.toggle('lap-2', lap === 1);
+    el.restFill.classList.toggle('lap-3', lap >= 2);
+  }
+
+  var lastSand = null;
+  var lastDialMode = null;
+
+  // One entry per digit card: where it reads from in the clock string, its face
+  // node, what it currently shows, and which of the two flip animations is
+  // armed next.
+  var flipCells = null;
+  var flipLength = 0;
+
+  /**
+   * Build the split-flap cards for a clock string of `text.length` characters.
+   *
+   * Rebuilt only when the shape changes - which is once, at first paint, and
+   * again only if an hour count ever needs a third digit. Everything after that
+   * is a text write on the cards that actually changed.
+   */
+  /**
+   * The bottom half keeps the *old* digit for the length of the fall - it is
+   * the half the flap is landing on, and swapping it early is what makes a
+   * split-flap read as two different numbers at once. It catches up when the
+   * flap lands.
+   *
+   * A function rather than a closure written inside the build loop: this file
+   * is ES5-flavoured, `var` is function-scoped, and every handler declared in
+   * that loop closed over the *same* variable - so five of the six cards never
+   * caught up and stayed a digit behind for good. A parameter gives each card
+   * its own binding.
+   *
+   * `animationcancel` matters as much as `animationend`: a change arriving
+   * mid-fall replaces the animation instead of finishing it.
+   */
+  function armFlipLanding(cell) {
+    var land = function () { cell.bottom.textContent = cell.value; };
+    cell.node.addEventListener('animationend', land);
+    cell.node.addEventListener('animationcancel', land);
+  }
+
+  function flipHalf(className, ch) {
+    var half = document.createElement('span');
+    half.className = className;
+    var glyph = document.createElement('i');
+    glyph.textContent = ch;
+    half.appendChild(glyph);
+    return half;
+  }
+
+  function buildFlipClock(text) {
+    el.timerDigits.textContent = '';
+    flipCells = [];
+    flipLength = text.length;
+
+    // Position of the second colon: everything after it is the seconds pair,
+    // which is rendered small.
+    var secondsFrom = text.lastIndexOf(':');
+
+    for (var i = 0; i < text.length; i++) {
+      var ch = text.charAt(i);
+
+      if (ch === ':') {
+        var sep = document.createElement('span');
+        sep.className = 'fd-sep';
+        sep.textContent = ':';
+        el.timerDigits.appendChild(sep);
+        continue;
+      }
+
+      var card = document.createElement('span');
+      card.className = 'fd' + (secondsFrom > -1 && i > secondsFrom ? ' fd-sm' : '');
+
+      var top = flipHalf('fd-half fd-top', ch);
+      var bottom = flipHalf('fd-half fd-bottom', ch);
+
+      var flap = document.createElement('span');
+      flap.className = 'fd-flap';
+      var front = flipHalf('fd-face fd-front', ch);
+      var back = flipHalf('fd-face fd-back', ch);
+      flap.appendChild(front);
+      flap.appendChild(back);
+
+      card.appendChild(top);
+      card.appendChild(bottom);
+      card.appendChild(flap);
+      el.timerDigits.appendChild(card);
+
+      var cell = {
+        index: i, node: card, value: ch, alt: false,
+        top: top.firstChild, bottom: bottom.firstChild,
+        front: front.firstChild, back: back.firstChild
+      };
+
+      armFlipLanding(cell);
+      flipCells.push(cell);
+    }
+  }
+
+  /**
+   * Write a clock string, flipping only the cards whose digit changed.
+   *
+   * On a normal tick that is one card; on a minute boundary, two or three. The
+   * cost of the whole clock is therefore a couple of text writes and a class
+   * swap per second, which is what the old single textContent cost.
+   */
+  function renderFlipClock(text) {
+    if (!el.timerDigits) return;
+    if (!flipCells || flipLength !== text.length) buildFlipClock(text);
+
+    for (var i = 0; i < flipCells.length; i++) {
+      var cell = flipCells[i];
+      var ch = text.charAt(cell.index);
+      if (ch === cell.value) continue;
+
+      // The flap's front keeps the digit that is leaving - it is the half the
+      // eye is still looking at as it starts to fall - and so does the bottom
+      // half underneath it. The top and the flap's back take the new digit; the
+      // bottom follows when the flap lands on it.
+      cell.front.textContent = cell.value;
+      cell.top.textContent = ch;
+      cell.back.textContent = ch;
+      cell.value = ch;
+
+      cell.node.classList.remove(cell.alt ? 'flip-b' : 'flip-a');
+      cell.alt = !cell.alt;
+      cell.node.classList.add(cell.alt ? 'flip-b' : 'flip-a');
+    }
+  }
+
+  /**
+   * Sand level of the little hourglass, as the fraction of the day still owed.
+   *
+   * Written at most once per whole percent rather than once per second: this
+   * runs on the tick path, and a custom-property write is a style recalc even
+   * when the value is unchanged.
+   */
+  function renderHourglass(remainingRatio) {
+    if (!el.dialHourglass) return;
+    var sand = Math.round(Math.max(0, Math.min(1, remainingRatio)) * 100) / 100;
+    if (sand === lastSand) return;
+    lastSand = sand;
+    el.dialHourglass.style.setProperty('--sand', sand);
+    el.dialHourglass.style.setProperty('--sand-done', 1 - sand);
+  }
+
+  /**
+   * Swap the dial between hours worked and hours left.
+   *
+   * Kept in settings rather than in a variable so it survives a reload - the
+   * whole point is that someone who only ever wants the countdown gets it
+   * without tapping again every morning.
+   */
+  function toggleDialMode() {
+    var next = !(Store.settings().dialShowsRemaining === true);
+    Store.updateSettings({ dialShowsRemaining: next });
+
+    if (el.dialHourglass) {
+      el.dialHourglass.classList.remove('flip');
+      // getBoundingClientRect, not offsetWidth: this is an SVG element, and
+      // SVGElement has no offsetWidth at all - the read was `void undefined`,
+      // no reflow was forced, and the animation replayed exactly once ever.
+      void el.dialHourglass.getBoundingClientRect().width;
+      el.dialHourglass.classList.add('flip');
+    }
+
+    return next;
+  }
+
   function renderDialCenter(summary) {
     var state = summary.state;
     var inSegment = SEGMENT_STATES[state] === true;
@@ -299,8 +555,36 @@
     // which a rolling deploy can serve for a few seconds - the clock keeps
     // running and only the new parts sit out. Unguarded this threw once per
     // second, on the one path that must never stop.
-    if (el.timerLabel) el.timerLabel.textContent = DIAL_LABEL[state] || DIAL_LABEL.IDLE;
-    el.timerDigits.textContent = hms(inSegment ? summary.openMs : summary.creditedMs);
+    var target = targetMs();
+    var remainingMs = Math.max(0, target - summary.creditedMs);
+    var showsRemaining = Store.settings().dialShowsRemaining === true;
+
+    // The button's own state, applied here rather than in the toggle so a
+    // reload lands on the right label too. Guarded because this is the tick
+    // path and the mode changes about once a week.
+    if (showsRemaining !== lastDialMode) {
+      lastDialMode = showsRemaining;
+      if (el.dialToggle) {
+        el.dialToggle.setAttribute('aria-pressed', showsRemaining ? 'true' : 'false');
+        el.dialToggle.setAttribute('aria-label', showsRemaining
+          ? 'Dial shows hours left. Tap to show hours worked.'
+          : 'Dial shows hours worked. Tap to show hours left.');
+      }
+    }
+
+    if (showsRemaining) {
+      // One tap turns the dial into the countdown. It answers the day's other
+      // question - "when can I stop?" - from the same digits, so nothing else
+      // on the glance screen has to grow a second row to hold it.
+      if (el.timerLabel) el.timerLabel.textContent = remainingMs > 0 ? 'Hours left' : 'Goal met';
+      renderFlipClock(hms(remainingMs));
+    } else {
+      if (el.timerLabel) el.timerLabel.textContent = DIAL_LABEL[state] || DIAL_LABEL.IDLE;
+      renderFlipClock(hms(inSegment ? summary.openMs : summary.creditedMs));
+    }
+
+    renderHourglass(target > 0 ? remainingMs / target : 0);
+    renderRestArc(summary);
 
     // The chip is what the banner below used to spell out. Under the limit it
     // is the countdown; over it, the overrun - so the dial alone answers "am I
@@ -311,10 +595,14 @@
     var limits = restLimits(state);
 
     if (limits) {
+      // Counted down in mm:ss, not in whole minutes. "reminder in 5m" sits
+      // there unchanged for sixty seconds beside a ring that moves less than
+      // half a degree in that time, and the pair of them look frozen - which is
+      // exactly what a break timer must never look like.
       if (summary.openMs < limits.limit) {
-        chip = 'reminder in ' + shortDuration(limits.limit - summary.openMs);
+        chip = 'back in ' + ms(limits.limit - summary.openMs);
       } else {
-        chip = shortDuration(summary.openMs - limits.limit) + ' over';
+        chip = ms(summary.openMs - limits.limit) + ' over';
         over = true;
       }
     } else if (state === 'MEETING') {
@@ -550,6 +838,89 @@
 
   var lastWeekKey = null;
 
+
+  // Slice order matters: the two credited kinds first, so the counted portion
+  // of the week is one continuous sweep rather than two pieces with breaks
+  // wedged between them.
+  var DONUT_PARTS = [
+    { key: 'workMs', klass: 'dn-work', label: 'Work' },
+    { key: 'meetingMs', klass: 'dn-meeting', label: 'Meetings' },
+    { key: 'breakMs', klass: 'dn-break', label: 'Breaks' },
+    { key: 'lunchMs', klass: 'dn-lunch', label: 'Lunch' }
+  ];
+
+  var DONUT_RADIUS = 50;
+  var DONUT_CIRCUMFERENCE = 2 * Math.PI * DONUT_RADIUS;
+  // A hairline of background between slices, so two adjacent colours read as
+  // two values rather than one gradient. Taken off the drawn dash only - the
+  // running offset still advances by the full share, or the ring would come up
+  // short by one gap per slice and stop meaning one hundred per cent.
+  var DONUT_GAP = 3;
+
+  /**
+   * Where the week's logged time went, as one hundred per cent.
+   *
+   * Built from stroke-dasharray on concentric circles rather than from arc
+   * paths: four dash lengths and four offsets, no trigonometry, and the browser
+   * draws the joins. Percentages are printed beside it because a reader cannot
+   * tell 9% from 12% by angle, and those two are exactly the ones people want
+   * to compare.
+   */
+  function renderWeekDonut(entries) {
+    if (!el.weekDonut) return;
+
+    var totals = DONUT_PARTS.map(function (part) {
+      return entries.reduce(function (sum, e) { return sum + (e.summary[part.key] || 0); }, 0);
+    });
+    var total = totals.reduce(function (sum, ms) { return sum + ms; }, 0);
+
+    if (total <= 0) {
+      el.weekDonut.innerHTML = '<p class="dn-empty">Nothing logged this week yet.</p>';
+      return;
+    }
+
+    var offset = 0;
+    var slices = '';
+    var rows = '';
+    var visible = totals.filter(function (ms) { return ms > 0; }).length;
+
+    DONUT_PARTS.forEach(function (part, i) {
+      var value = totals[i];
+      if (value <= 0) return;
+      var share = value / total;
+      var length = share * DONUT_CIRCUMFERENCE;
+      // A single slice is a whole ring and must close; a sliver thinner than the
+      // gap would otherwise disappear entirely, so it keeps a visible stub.
+      var drawn = visible < 2 ? length : Math.max(1.5, length - DONUT_GAP);
+
+      slices +=
+        '<circle class="dn-slice ' + part.klass + '" cx="60" cy="60" r="' + DONUT_RADIUS + '"' +
+        ' stroke-dasharray="' + drawn.toFixed(2) + ' ' + (DONUT_CIRCUMFERENCE - drawn).toFixed(2) + '"' +
+        ' stroke-dashoffset="' + (-offset).toFixed(2) + '"></circle>';
+      offset += length;
+
+      rows +=
+        '<li class="dn-row">' +
+          '<span class="swatch ' + part.klass + '" aria-hidden="true"></span>' +
+          '<span class="dn-label">' + part.label + '</span>' +
+          '<span class="dn-pct">' + Math.round(share * 100) + '%</span>' +
+          '<span class="dn-time">' + hm(value) + '</span>' +
+        '</li>';
+    });
+
+    var creditedShare = (totals[0] + totals[1]) / total;
+
+    el.weekDonut.innerHTML =
+      '<div class="dn-chart">' +
+        '<svg viewBox="0 0 120 120" aria-hidden="true">' +
+          '<circle class="dn-track" cx="60" cy="60" r="' + DONUT_RADIUS + '"></circle>' +
+          slices +
+        '</svg>' +
+        '<span class="dn-centre"><strong>' + Math.round(creditedShare * 100) + '%</strong><small>counted</small></span>' +
+      '</div>' +
+      '<ul class="dn-legend">' + rows + '</ul>';
+  }
+
   function renderWeek(weekAnchor, now) {
     var days = Store.daysOf();
     var monday = startOfWeek(weekAnchor);
@@ -624,25 +995,27 @@
       el.histogramBars.appendChild(col);
     });
 
-    // As with the calendar: grow the bars when the week being shown changes,
-    // not on every re-render triggered by an unrelated button press.
-    var weekKey = TL.dateKeyOf(monday);
-    el.histogramBars.classList.toggle('animate', weekKey !== lastWeekKey);
-    lastWeekKey = weekKey;
-
     // Put the goal line on the same scale as the bars rather than at a fixed
     // height, so it stays truthful when the scale stretches for a long day.
     //
     // Only the ratio is published; styles.css turns it into a position against
     // the track band. Setting a pixel offset here instead was wrong in two
-    // ways: the track is fluid now, and the first render happens while the
-    // week view is still hidden, so every rect it could have measured reads
-    // zero and the line stayed where that fallback put it.
+    // ways: the track height is a token the stylesheet owns, and the first
+    // render happens while the week view is still hidden, so every rect it
+    // could have measured reads zero.
     var goalLine = document.querySelector('.target-line-indicator');
     if (goalLine) {
       goalLine.style.setProperty('--goal-ratio', Math.min(1, target / scale).toFixed(4));
       goalLine.querySelector('.target-label').textContent = compactHours(target);
     }
+
+    renderWeekDonut(entries);
+
+    // As with the calendar: replay the entry animation when the week on screen
+    // changes, not on every re-render triggered by an unrelated button press.
+    var weekKey = TL.dateKeyOf(monday);
+    el.histogramBars.classList.toggle('animate', weekKey !== lastWeekKey);
+    lastWeekKey = weekKey;
 
     var worked = entries.filter(function (e) { return e.summary.creditedMs > 0; });
     var totalMs = entries.reduce(function (sum, e) { return sum + e.summary.creditedMs; }, 0);
@@ -1064,7 +1437,16 @@
     el.setLunchAlert.value = s.lunchAlertMinutes;
     el.setLunchRepeat.value = s.lunchRepeatMinutes;
     el.setKeepAlive.checked = !!s.keepAliveEnabled;
+    el.setLockScreen.checked = !!s.lockScreenControls;
+    // The card is drawn for the silent track, so it cannot be on without it.
+    el.setLockScreen.disabled = !s.keepAliveEnabled;
     el.setVibrate.checked = !!s.vibrate;
+
+    el.setStretchAlert.value = s.stretchAlertMinutes;
+    el.setStretchRepeat.value = s.stretchRepeatMinutes;
+    el.setPauseAlert.value = s.pauseAlertMinutes;
+    el.setMeetingAlert.value = s.meetingAlertMinutes;
+    el.setOvertimeReminder.checked = !!s.overtimeReminder;
 
     el.renamePersonInput.value = person.name;
     el.renamePersonRole.value = person.role || '';
@@ -1075,6 +1457,43 @@
     renderSettingsSummaries(notify);
   }
 
+  /**
+   * Apply the chosen theme.
+   *
+   * The attribute goes on <html>, not <body>, so the very first paint is right:
+   * the stylesheet's light block keys off `:root[data-theme]`, and a class added
+   * to body after load would flash the dark palette first. `system` leaves the
+   * attribute set to "system" rather than removed, so the media query has a
+   * selector to match and an explicit dark choice can still win over a light OS.
+   *
+   * theme-color follows, or the phone's status bar stays black over a white app.
+   */
+  function applyTheme() {
+    var theme = Store.settings().theme || 'system';
+    document.documentElement.setAttribute('data-theme', theme);
+
+    var light = theme === 'light' || (theme === 'system' &&
+      global.matchMedia && global.matchMedia('(prefers-color-scheme: light)').matches);
+
+    var meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute('content', light ? '#f2f5f3' : '#0b100e');
+
+    document.querySelectorAll('[data-theme-choice]').forEach(function (btn) {
+      var active = btn.getAttribute('data-theme-choice') === theme;
+      btn.classList.toggle('active', active);
+      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+  }
+
+  /** Seed the first-run form from the defaults the store already holds. */
+  function fillSetupForm() {
+    var s = Store.settings();
+    if (!el.setupTarget) return;
+    el.setupTarget.value = (s.dailyTargetMinutes / 60).toFixed(2).replace(/\.?0+$/, '');
+    el.setupBreak.value = s.breakAlertMinutes;
+    el.setupLunch.value = s.lunchAlertMinutes;
+  }
+
   /** Collapsed groups still have to answer "what is this set to?". */
   function renderSettingsSummaries(notify) {
     var s = Store.settings();
@@ -1083,11 +1502,21 @@
 
     if (el.sumReminders) {
       el.sumReminders.textContent = perm === 'granted'
-        ? 'On · break ' + s.breakAlertMinutes + 'm · lunch ' + s.lunchAlertMinutes + 'm'
+        ? 'On' + (s.vibrate ? ' · vibrate' : '') + (s.keepAliveEnabled ? ' · screen off' : '') +
+          (s.lockScreenControls && s.keepAliveEnabled ? ' · lock screen' : '')
         : (perm === 'denied' ? 'Blocked — needs your attention' : 'Off · tap to turn on');
     }
-    if (el.sumWorkday) {
-      el.sumWorkday.textContent = compactHours(s.dailyTargetMinutes * 60000) + ' a day';
+    if (el.sumTimers) {
+      // The three people actually change, in the order they think about them.
+      // The rest of the group's numbers are visible the moment it opens, and a
+      // header that listed all seven would be unreadable at 11px.
+      el.sumTimers.textContent = compactHours(s.dailyTargetMinutes * 60000) + ' day · break ' +
+        s.breakAlertMinutes + 'm · lunch ' + s.lunchAlertMinutes + 'm';
+    }
+    if (el.sumAppearance) {
+      var theme = s.theme || 'system';
+      el.sumAppearance.textContent =
+        theme === 'system' ? 'Matching your phone' : (theme === 'light' ? 'Light' : 'Dark');
     }
     if (el.sumProfile) {
       el.sumProfile.textContent = person.name + (person.role ? ' · ' + person.role : '') +
@@ -1246,6 +1675,254 @@
     focusReturn = null;
   }
 
+  /**
+   * Mark the app as being in Tanglish mode.
+   *
+   * The logo is the only thing that changes, and it changes because it is the
+   * thing that was tapped: an easter egg that leaves no trace reads as a bug
+   * the next morning, when the reminders have started speaking Tamil and
+   * nothing on screen says why.
+   */
+  function renderTanglishState() {
+    if (!el.appRoot) return;
+    var on = Store.settings().tanglishReminders === true;
+    el.appRoot.classList.toggle('tanglish', on);
+    if (el.brandTargetBadge) el.brandTargetBadge.classList.toggle('tanglish', on);
+  }
+
+  /* ------------------------------------------------------------ walkthrough */
+
+  /**
+   * The first-run tour.
+   *
+   * Every step points at a control that is already on screen — no screenshots,
+   * no mock-ups — so it cannot drift out of date with the layout and it lands
+   * in the right place on any screen size. Steps whose target is not currently
+   * visible (a row dropped by one of the height queries) are removed before the
+   * tour starts rather than skipped mid-way, so "3 of 6" stays honest.
+   *
+   * The copy is one short sentence per step for two reasons: nobody reads a
+   * paragraph to get past a walkthrough, and the card is parked in one place
+   * for the whole tour, so it has to clear the controls it points at.
+   */
+  var TOUR_STEPS = [
+    {
+      sel: '#btnStart',
+      title: 'Start the day here',
+      text: 'One tap when you sit down. It keeps counting with the app closed and the phone asleep.'
+    },
+    {
+      sel: '#progressRingContainer',
+      title: 'The dial is your day',
+      text: 'The ring is your 8-hour goal; the digits count whatever is running right now.'
+    },
+    {
+      sel: '.action-buttons-grid',
+      title: 'Log what you are doing',
+      text: 'Break, lunch, meeting, pause, End day. Breaks and lunch do not count; meetings do.'
+    },
+    {
+      sel: '.session-stats-bar',
+      title: 'Today at a glance',
+      text: 'Meetings, breaks, lunch and paused time, updated as you go.'
+    },
+    {
+      sel: '.bottom-nav [data-view="week"]',
+      title: 'Your week',
+      text: 'Your hours a day against the goal, and how far ahead or behind you are.'
+    },
+    {
+      sel: '.bottom-nav [data-view="calendar"]',
+      title: 'The month',
+      text: 'Every day with its hours. Tap one to fix a day you forgot to close.'
+    },
+    {
+      sel: '#openSettingsBtn',
+      title: 'Reminders and the rest',
+      text: 'Nudges that reach you with the screen off, your target, export and backup.'
+    }
+  ];
+
+  var tourSteps = [];
+  var tourIndex = 0;
+  var tourBound = false;
+  var tourKeyHandler = null;
+
+  /** The target's box, or null when it is missing or currently collapsed. */
+  function tourRect(step) {
+    var node = document.querySelector(step.sel);
+    if (!node) return null;
+    var rect = node.getBoundingClientRect();
+    return (rect.width > 0 && rect.height > 0) ? rect : null;
+  }
+
+  function renderTourStep() {
+    var step = tourSteps[tourIndex];
+    var rect = step && tourRect(step);
+
+    // The layout changed under us — a rotation, or the keyboard opening. There
+    // is nothing sensible to point at, so leave rather than highlight air.
+    if (!rect) { endTour(); return; }
+
+    el.tourSpotlight.style.width = (rect.width + TOUR_PAD * 2) + 'px';
+    el.tourSpotlight.style.height = (rect.height + TOUR_PAD * 2) + 'px';
+    el.tourSpotlight.style.transform =
+      'translate(' + (rect.left - TOUR_PAD) + 'px, ' + (rect.top - TOUR_PAD) + 'px)';
+
+    el.tourCount.textContent = 'Step ' + (tourIndex + 1) + ' of ' + tourSteps.length;
+    el.tourTitle.textContent = step.title;
+    el.tourText.textContent = step.text;
+    el.tourNextBtn.textContent = tourIndex === tourSteps.length - 1 ? 'Got it' : 'Next';
+  }
+
+  var TOUR_MARGIN = 12;
+  // How far the highlight ring stands off its target. Placement has to clear
+  // the ring, not the control, or the card lands on the glow.
+  var TOUR_PAD = 6;
+
+  /**
+   * Park the card once, for the whole tour.
+   *
+   * It used to hunt for a gap beside each highlight, which meant it hopped
+   * across the screen on every Next and the reader had to find it again before
+   * they could read it. It now takes one seat and only the spotlight moves.
+   *
+   * The seat is measured rather than hard-coded, because there is no constant
+   * that is right twice: it is the widest horizontal band that none of the
+   * steps' targets sit in. On a phone that lands between the buttons and the
+   * nav and the tour never covers anything. A landscape phone is 360px tall
+   * with no band that big, so the fallback takes whichever of the two edges
+   * hides the fewest controls - still one seat for the whole tour.
+   */
+  /**
+   * Freeze the card at the height of its longest step.
+   *
+   * A fixed seat is only half of standing still: a two-line step after a
+   * three-line one shrinks the box out from under the buttons, which is the
+   * same jumping on one edge. Costs one layout pass per step, once per tour,
+   * and cannot be done in CSS because the line count depends on the width.
+   */
+  function sizeTourCard() {
+    var tallest = 0;
+    el.tourCard.style.height = '';
+    tourSteps.forEach(function (step) {
+      el.tourText.textContent = step.text;
+      el.tourTitle.textContent = step.title;
+      tallest = Math.max(tallest, el.tourCard.offsetHeight);
+    });
+    el.tourCard.style.height = tallest + 'px';
+  }
+
+  function placeTourCard() {
+    var card = el.tourCard;
+    var vw = window.innerWidth;
+    var vh = window.innerHeight;
+    var h = card.offsetHeight;
+
+    // The nav is fixed over the content, so the usable bottom edge is its top.
+    var nav = document.querySelector('.bottom-nav');
+    var floor = nav ? Math.min(vh, nav.getBoundingClientRect().top) : vh;
+
+    // Merged into occupied bands first. Targets nest and share edges - the
+    // Start button *is* one of the buttons in the grid, and the three nav items
+    // sit side by side - and counting the same strip of screen twice would let
+    // a seat that hides one row score worse than one that hides the dial.
+    var rects = [];
+    tourSteps.map(tourRect).filter(Boolean)
+      .map(function (r) { return { top: r.top - TOUR_PAD, bottom: r.bottom + TOUR_PAD }; })
+      .sort(function (a, b) { return a.top - b.top; })
+      .forEach(function (r) {
+        var last = rects[rects.length - 1];
+        if (last && r.top <= last.bottom) last.bottom = Math.max(last.bottom, r.bottom);
+        else rects.push(r);
+      });
+
+    // Centred in every band no target sits in, plus the two edges as a last
+    // resort for a screen with no band big enough.
+    var seats = [TOUR_MARGIN, floor - h - TOUR_MARGIN];
+    var cursor = TOUR_MARGIN;
+    rects.concat([{ top: vh - TOUR_MARGIN, bottom: vh }]).forEach(function (r) {
+      seats.push(cursor + (r.top - TOUR_MARGIN - cursor - h) / 2);
+      cursor = r.bottom + TOUR_MARGIN;
+    });
+
+    // Scored by how much of a target each seat would hide, not by how many it
+    // touches: a band slightly too short still beats an edge that buries the
+    // dial, and a seat that hides nothing scores zero and wins outright.
+    var clamp = function (t) { return Math.max(TOUR_MARGIN, Math.min(t, vh - h - TOUR_MARGIN)); };
+    var hidden = function (t) {
+      return rects.reduce(function (sum, r) {
+        return sum + Math.max(0, Math.min(r.bottom, t + h) - Math.max(r.top, t));
+      }, 0);
+    };
+
+    var top = seats.map(clamp).reduce(function (bestSeat, seat) {
+      return hidden(seat) < hidden(bestSeat) ? seat : bestSeat;
+    });
+
+    card.style.top = Math.round(top) + 'px';
+    card.style.left = Math.round((vw - card.offsetWidth) / 2) + 'px';
+  }
+
+  function nextTourStep() {
+    if (tourIndex >= tourSteps.length - 1) { endTour(); return; }
+    tourIndex++;
+    renderTourStep();
+  }
+
+  function endTour() {
+    if (el.tourOverlay.hidden) return;
+    Store.markSeen('tour');
+    closeModal(el.tourOverlay);
+    global.removeEventListener('resize', onTourResize);
+    document.removeEventListener('keydown', tourKeyHandler);
+  }
+
+  /** A rotation moves every target and rewraps the copy, so both are redone. */
+  function onTourResize() {
+    sizeTourCard();
+    renderTourStep();
+    placeTourCard();
+  }
+
+  function startTour() {
+    if (!el.tourOverlay || !el.tourOverlay.hidden) return;
+
+    tourSteps = TOUR_STEPS.filter(tourRect);
+    if (!tourSteps.length) return;
+    tourIndex = 0;
+
+    // Steps 1 to 4 live on the timer view, and the nav steps read as nonsense
+    // from anywhere else.
+    showView('timer');
+
+    if (!tourBound) {
+      el.tourNextBtn.addEventListener('click', nextTourStep);
+      el.tourSkipBtn.addEventListener('click', endTour);
+      tourBound = true;
+    }
+
+    tourKeyHandler = function (event) {
+      if (event.key === 'Escape') endTour();
+    };
+    document.addEventListener('keydown', tourKeyHandler);
+    global.addEventListener('resize', onTourResize);
+
+    openModal(el.tourOverlay);
+    // Sized before it is seated, and seated before either is shown to anyone.
+    sizeTourCard();
+    renderTourStep();
+    placeTourCard();
+  }
+
+  /** First run only, and never on top of the sign-in gate or an open dialog. */
+  function maybeStartTour() {
+    if (Store.seen('tour')) return;
+    if (el.signinScreen && !el.signinScreen.hidden) return;
+    if (document.querySelector('.modal-overlay.open')) return;
+    startTour();
+  }
+
   function renderDateHeader(now) {
     var d = new Date(now);
     el.currentDayName.textContent = d.toLocaleDateString([], { weekday: 'long' });
@@ -1284,6 +1961,12 @@
     renderSettingsSummaries: renderSettingsSummaries,
     showView: showView,
     openModal: openModal,
-    closeModal: closeModal
+    closeModal: closeModal,
+    startTour: startTour,
+    maybeStartTour: maybeStartTour,
+    toggleDialMode: toggleDialMode,
+    renderTanglishState: renderTanglishState,
+    fillSetupForm: fillSetupForm,
+    applyTheme: applyTheme
   };
 })(typeof window !== 'undefined' ? window : globalThis);
