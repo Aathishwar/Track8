@@ -1399,14 +1399,37 @@
   }
 
   /** Handle ?a=resume, set when a notification action reopens a closed app. */
+  /**
+   * A button on the pinned notification, tapped while nothing was open.
+   *
+   * The service worker cannot change a day on its own - the log lives in this
+   * page's storage - so it launches with ?a=… and the action is completed here
+   * on boot. Same functions the timer screen's buttons call, and the same
+   * toggling, so "Break" while already on one ends it.
+   */
+  var LAUNCH_ACTIONS = {
+    resume: function () {
+      var state = currentState();
+      if (state === S.BREAK || state === S.LUNCH || state === S.PAUSED) actResume();
+    },
+    'break': function () {
+      if (currentState() === S.BREAK) actResume(); else actBreak();
+    },
+    lunch: function () {
+      if (currentState() === S.LUNCH) actResume(); else actLunch();
+    },
+    pause: function () {
+      if (currentState() === S.PAUSED) actResume(); else actPause();
+    },
+    end: function () { actEndDay(true); }
+  };
+
   function consumeLaunchAction() {
     var params = new URLSearchParams(global.location.search);
-    if (params.get('a') !== 'resume') return;
+    var action = LAUNCH_ACTIONS[params.get('a')];
+    if (!action) return;
 
-    var state = currentState();
-    if (state === S.BREAK || state === S.LUNCH) {
-      actResume();
-    }
+    action();
     history.replaceState({}, '', global.location.pathname);
   }
 

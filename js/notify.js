@@ -91,13 +91,20 @@
    * The service worker relays notification-action taps back to us. If the app
    * was closed it reopens with ?a=resume instead, handled in app.js.
    */
+  var SW_ACTIONS = {
+    'resume-work': 'onResumeRequest',
+    'break': 'onBreakRequest',
+    lunch: 'onLunchRequest',
+    pause: 'onPauseRequest',
+    end: 'onEndDayRequest'
+  };
+
   function listenForServiceWorkerMessages() {
     if (!('serviceWorker' in navigator)) return;
     navigator.serviceWorker.addEventListener('message', function (event) {
       var data = event.data || {};
-      if (data.action === 'resume-work' && callbacks.onResumeRequest) {
-        callbacks.onResumeRequest();
-      }
+      var fn = callbacks[SW_ACTIONS[data.action]];
+      if (fn) fn();
     });
   }
 
@@ -317,6 +324,88 @@
    * Everything the timer screen can do, in other words, except logging a
    * meeting - which needs a length, and a lock screen has nowhere to ask.
    */
+  /**
+   * The picture on the card, drawn rather than shipped.
+   *
+   * A lock-screen card is mostly artwork, and the alternative to giving it one
+   * is the app icon stretched to fill a phone screen. It is generated on a
+   * canvas because the no-external-requests rule means there is nowhere to
+   * fetch a photograph from, and shipping five 512px images would be a quarter
+   * of a megabyte in the shell cache for something that is never seen inside
+   * the app.
+   *
+   * Each state gets its own sky, so the card reads at a glance from across a
+   * desk: teal for the clock running, indigo for a meeting, amber for a break,
+   * pink for lunch, overcast grey for a pause. Same colours as the buttons and
+   * the week chart, so nothing new has to be learnt.
+   */
+  var SCENERY = {
+    WORKING: { sky: ['#0b3f45', '#20c7b5'], sun: '#e8fff9', hills: ['#0a2f38', '#062227'] },
+    MEETING: { sky: ['#1e1b4b', '#818cf8'], sun: '#eef2ff', hills: ['#1b1a44', '#111031'] },
+    BREAK: { sky: ['#4a2a08', '#f59e0b'], sun: '#fff4dc', hills: ['#37220b', '#231506'] },
+    LUNCH: { sky: ['#4a1035', '#ec4899'], sun: '#ffe6f2', hills: ['#3a0f2c', '#25091c'] },
+    PAUSED: { sky: ['#1f2933', '#64748b'], sun: '#e2e8f0', hills: ['#1a222b', '#111820'] }
+  };
+
+  var artworkCache = {};
+
+  function buildArtwork(state) {
+    if (artworkCache[state]) return artworkCache[state];
+
+    var look = SCENERY[state];
+    if (!look || typeof document === 'undefined') return null;
+
+    var size = 512;
+    var canvas = document.createElement('canvas');
+    canvas.width = size;
+    canvas.height = size;
+    var ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+
+    var sky = ctx.createLinearGradient(0, 0, 0, size * 0.72);
+    sky.addColorStop(0, look.sky[0]);
+    sky.addColorStop(1, look.sky[1]);
+    ctx.fillStyle = sky;
+    ctx.fillRect(0, 0, size, size);
+
+    // Sun low on the horizon, with its glow bled into the sky above it.
+    var glow = ctx.createRadialGradient(size * 0.5, size * 0.62, 0, size * 0.5, size * 0.62, size * 0.42);
+    glow.addColorStop(0, 'rgba(255,255,255,0.55)');
+    glow.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = glow;
+    ctx.fillRect(0, 0, size, size);
+
+    ctx.fillStyle = look.sun;
+    ctx.beginPath();
+    ctx.arc(size * 0.5, size * 0.62, size * 0.1, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Two ranges rather than one, because a single silhouette reads as a wedge
+    // and two read as distance.
+    var range = function (baseline, height, colour, offset) {
+      ctx.fillStyle = colour;
+      ctx.beginPath();
+      ctx.moveTo(0, size);
+      ctx.lineTo(0, baseline);
+      for (var x = 0; x <= size; x += 8) {
+        var t = x / size;
+        var y = baseline - height * (
+          0.55 * Math.sin(t * 5.2 + offset) + 0.35 * Math.sin(t * 11.7 + offset * 2) + 0.5
+        );
+        ctx.lineTo(x, y);
+      }
+      ctx.lineTo(size, size);
+      ctx.closePath();
+      ctx.fill();
+    };
+
+    range(size * 0.74, size * 0.1, look.hills[0], 0.6);
+    range(size * 0.86, size * 0.08, look.hills[1], 2.2);
+
+    artworkCache[state] = canvas.toDataURL('image/png');
+    return artworkCache[state];
+  }
+
   var MEDIA_TITLES = {
     WORKING: '⏱️ On the clock',
     MEETING: '👥 In a meeting',
@@ -422,15 +511,15 @@
 
     if (key !== lastMediaKey) {
       lastMediaKey = key;
+      var scene = buildArtwork(summary.state);
       try {
         navigator.mediaSession.metadata = new global.MediaMetadata({
           title: title,
           artist: subtitle,
           album: 'Track8',
-          artwork: [
-            { src: './icons/icon-192.png', sizes: '192x192', type: 'image/png' },
-            { src: './icons/icon-512.png', sizes: '512x512', type: 'image/png' }
-          ]
+          artwork: scene
+            ? [{ src: scene, sizes: '512x512', type: 'image/png' }]
+            : [{ src: './icons/icon-512.png', sizes: '512x512', type: 'image/png' }]
         });
       } catch (e) { /* metadata is cosmetic */ }
     }
@@ -476,6 +565,15 @@
     }
 
     updateMedia(summary);
+
+    // The named buttons ride with the card, on the same setting: both are
+    // "control Track8 without unlocking the phone", and a shade entry that
+    // outlived the card the user turned off would read as a bug.
+    if (open && lockScreenEnabled()) {
+      postShiftNotification(summary.state, summary.openSince, summary.creditedMs);
+    } else if (!(cfg && cfg.resting)) {
+      clearShiftNotification();
+    }
   }
 
   /**
@@ -621,20 +719,85 @@
   }
 
   /**
-   * Pin the ongoing notification for a break that has just started.
-   * Silent on purpose: it is a status line, not an alert.
+   * The pinned entry that follows the whole shift.
+   *
+   * The media card the OS draws is limited to transport buttons - previous,
+   * play, next, stop - which is why Break and Lunch had to be smuggled onto
+   * "previous" and "next". A notification is the one surface where a button
+   * can say what it does, and it shows on the lock screen too, so this carries
+   * the named ones and the card carries the picture and the progress.
+   *
+   * Android allows two actions on most builds and truncates the rest, so the
+   * order is deliberate: whatever this state most needs comes first.
    */
-  function onBreakStarted(state, since) {
+  var SHIFT_ACTIONS = {
+    WORKING: [
+      { action: 'break', title: '☕ Break' },
+      { action: 'lunch', title: '🍱 Lunch' },
+      { action: 'pause', title: '⏸ Pause' }
+    ],
+    MEETING: [
+      { action: 'break', title: '☕ Break' },
+      { action: 'lunch', title: '🍱 Lunch' }
+    ],
+    BREAK: [
+      { action: 'resume', title: 'End break' },
+      { action: 'lunch', title: '🍱 Lunch instead' }
+    ],
+    LUNCH: [
+      { action: 'resume', title: 'End lunch' },
+      { action: 'break', title: '☕ Break instead' }
+    ],
+    PAUSED: [
+      { action: 'resume', title: '▶ Back on the clock' },
+      { action: 'end', title: 'End day' }
+    ]
+  };
+
+  var SHIFT_TITLES = {
+    WORKING: '⏱️ On the clock',
+    MEETING: '👥 In a meeting',
+    PAUSED: '⏸️ Paused'
+  };
+
+  // What was last posted, so a notification that has not changed is not
+  // re-posted every second - which on Android is a visible flicker in the shade.
+  var lastShiftKey = '';
+
+  function shiftBody(state, since, creditedMs) {
     var cfg = config(state);
-    nagCursor = { since: since, fired: -1 };
+    // Ahead of the resting branch, which a pause also matches: a pause has a
+    // nag but no "due back", and quoting one would invent an agreement the
+    // user never made.
+    if (state === TL.STATES.PAUSED) return 'Paused at ' + clock(since) + '. Not counting.';
+    if (cfg && cfg.resting) {
+      return 'Started ' + clock(since) + ', due back ' +
+        clock(since + cfg.firstMinutes * 60000) + '. Not counting.';
+    }
+    return shortMs(creditedMs) + ' counted today. Since ' + clock(since) + '.';
+  }
 
-    startKeepAlive(true);
+  function shiftTitle(state, since) {
+    var cfg = config(state);
+    // The time is in the title because that is the only line Android renders
+    // in bold - a notification body is plain text with no markup of any kind.
+    if (cfg && cfg.resting && state !== TL.STATES.PAUSED) {
+      return cfg.icon + ' ' + cfg.label + ' · back by ' + clock(since + cfg.firstMinutes * 60000);
+    }
+    return SHIFT_TITLES[state] || '⏱️ Track8';
+  }
 
-    // The time goes in the title because the title is the one line Android
-    // renders in bold - a notification body is plain text, with no markup of
-    // any kind, so "back by 14:35" can only be emphasised by being up here.
-    return show(cfg.icon + ' ' + cfg.label + ' · back by ' + clock(since + cfg.firstMinutes * 60000), {
-      body: ongoingBody(cfg, since),
+  function postShiftNotification(state, since, creditedMs) {
+    var actions = SHIFT_ACTIONS[state];
+    if (!actions) { clearShiftNotification(); return; }
+
+    // Re-post on the state changing or the minute turning, and not otherwise.
+    var key = state + '|' + Math.floor(creditedMs / 60000);
+    if (key === lastShiftKey) return;
+    lastShiftKey = key;
+
+    show(shiftTitle(state, since), {
+      body: shiftBody(state, since, creditedMs),
       tag: TAG_ONGOING,
       renotify: false,
       requireInteraction: true,
@@ -642,15 +805,31 @@
       badge: './icons/badge-72.png',
       icon: './icons/icon-192.png',
       data: { kind: 'ongoing', state: state, since: since },
-      actions: [{ action: 'resume', title: 'End ' + cfg.label.toLowerCase() }]
+      actions: actions
     });
   }
 
-  /** Break ended: drop both notifications and release the keep-alive. */
+  function clearShiftNotification() {
+    lastShiftKey = '';
+    clearByTag(TAG_ONGOING);
+  }
+
+  /**
+   * A break has just begun. Pins its entry immediately rather than waiting for
+   * the next tick, because the gap would be visible on the phone in the hand
+   * that just tapped the button.
+   */
+  function onBreakStarted(state, since) {
+    nagCursor = { since: since, fired: -1 };
+    startKeepAlive(true);
+    postShiftNotification(state, since, 0);
+  }
+
+  /** Break ended: drop the nag and let the shift entry catch up on the tick. */
   function onBreakEnded() {
     nagCursor = { since: null, fired: -1 };
     stopKeepAlive();
-    clearByTag(TAG_ONGOING);
+    clearShiftNotification();
     clearByTag(TAG_NAG);
   }
 

@@ -108,6 +108,17 @@ self.addEventListener('fetch', function (event) {
  * without a reload. If nothing is open we launch the app with ?a=resume and
  * app.js completes the action on boot.
  */
+/* The buttons on the pinned shift notification. Every one of them is an action
+   the timer screen has, so the worker only has to name it - app.js owns what it
+   means. `open` is the fallback for a plain tap on the body. */
+var LAUNCH_URL = {
+  'resume-work': './?a=resume',
+  'break': './?a=break',
+  'lunch': './?a=lunch',
+  'pause': './?a=pause',
+  'end': './?a=end'
+};
+
 function focusOrOpen(action) {
   return self.clients.matchAll({ type: 'window', includeUncontrolled: true })
     .then(function (clientList) {
@@ -118,23 +129,30 @@ function focusOrOpen(action) {
           return client.focus();
         }
       }
-      var target = action === 'resume-work' ? './?a=resume' : './';
-      return self.clients.openWindow(target);
+      return self.clients.openWindow(LAUNCH_URL[action] || './');
     });
 }
+
+var ACTION_NAMES = {
+  resume: 'resume-work',
+  'break': 'break',
+  lunch: 'lunch',
+  pause: 'pause',
+  end: 'end'
+};
 
 self.addEventListener('notificationclick', function (event) {
   var action = event.action;
   event.notification.close();
 
-  if (action === 'resume') {
-    event.waitUntil(focusOrOpen('resume-work'));
+  if (ACTION_NAMES[action]) {
+    event.waitUntil(focusOrOpen(ACTION_NAMES[action]));
     return;
   }
 
   // Tapping the body of a break reminder means the same thing in practice.
   var data = event.notification.data || {};
-  if (data.kind === 'ongoing' || data.kind === 'nag') {
+  if (data.kind === 'nag') {
     event.waitUntil(focusOrOpen('resume-work'));
     return;
   }
