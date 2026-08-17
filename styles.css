@@ -159,9 +159,20 @@
    shadows here - light falls *onto* a light surface, it does not leak out of it.
    Applied by [data-theme="light"] on <html>, which app.js sets from the
    setting; "system" leaves the attribute off and the media query decides. */
-:root[data-theme="light"],
-:root[data-theme="system"] {
+/* "System" declares both so the browser's own chrome - scrollbars, form
+   controls, the caret - follows the phone along with the palette below. Naming
+   only `light` there made a system-dark phone render light scrollbars against
+   dark surfaces. */
+:root[data-theme="light"] {
   color-scheme: light;
+}
+
+:root[data-theme="system"] {
+  color-scheme: light dark;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
 }
 
 @media (prefers-color-scheme: light) {
@@ -372,13 +383,17 @@ body.modal-open {
   min-width: 0;
 }
 
+/* Literal colours, not --accent: the accent darkens in light mode so it can
+   carry text on white, and following it turned the mark a muddy bottle green.
+   A logo is the one thing on screen that should look the same in both themes -
+   it is the app icon, and the home screen does not have a theme. */
 .logo-icon {
   display: grid;
   place-items: center;
   width: 34px;
   height: 34px;
   border-radius: var(--radius-md);
-  background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+  background: linear-gradient(135deg, #20c7b5, #0d9488);
   color: #06231a;
   flex-shrink: 0;
 }
@@ -387,7 +402,7 @@ body.modal-open {
    the mark that changes, so the state has a visible home and turning it off
    again is discoverable from the same place. */
 .tanglish .logo-icon {
-  background: linear-gradient(135deg, var(--amber-warning), var(--activity-lunch));
+  background: linear-gradient(135deg, #f59e0b, #ec4899);
   color: #2a1500;
 }
 
@@ -452,6 +467,20 @@ body.modal-open {
 .icon-btn:active,
 .icon-btn-sm:active {
   background: var(--bg-surface-hover);
+}
+
+/* One button, three faces. Chosen by attribute rather than by script so the
+   header is right on the first paint; the bare :root case covers the moment
+   before ui.js has written the attribute at all. */
+.theme-ico {
+  display: none;
+}
+
+:root:not([data-theme]) .theme-ico-auto,
+:root[data-theme="system"] .theme-ico-auto,
+:root[data-theme="light"] .theme-ico-light,
+:root[data-theme="dark"] .theme-ico-dark {
+  display: block;
 }
 
 /* There is no data ahead of today, so forward stops at the current period.

@@ -166,7 +166,7 @@
   function cache() {
     [
       'appRoot', 'brandLogo', 'brandTargetBadge', 'personSelectBtn', 'headerAvatar', 'currentPersonName',
-      'personDropdown', 'personList', 'openAddPersonModal', 'notifyBtn', 'notifyDot',
+      'personDropdown', 'personList', 'openAddPersonModal', 'notifyBtn', 'notifyDot', 'themeBtn',
       'viewTimer', 'viewWeek', 'viewCalendar',
       'currentDayName', 'currentFullDate', 'statusPill', 'statusText',
       'progressRingFill', 'timerCenter', 'timerLabel', 'timerDigits', 'dialChip', 'timerAnnouncement',
@@ -1468,9 +1468,27 @@
    *
    * theme-color follows, or the phone's status bar stays black over a white app.
    */
+  var THEME_ORDER = ['system', 'light', 'dark'];
+  var THEME_LABELS = { system: 'matching your phone', light: 'light', dark: 'dark' };
+
+  /** What the header button will switch to next. */
+  function nextTheme() {
+    var theme = Store.settings().theme || 'system';
+    return THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
+  }
+
   function applyTheme() {
     var theme = Store.settings().theme || 'system';
     document.documentElement.setAttribute('data-theme', theme);
+
+    // Which icon is showing is CSS's business; the label is not, and a button
+    // whose icon changes has to say what it does or a screen reader user gets
+    // "Theme" three times with no way to tell them apart.
+    if (el.themeBtn) {
+      var label = 'Theme: ' + THEME_LABELS[theme] + '. Switch to ' + THEME_LABELS[nextTheme()];
+      el.themeBtn.setAttribute('aria-label', label);
+      el.themeBtn.title = label;
+    }
 
     var light = theme === 'light' || (theme === 'system' &&
       global.matchMedia && global.matchMedia('(prefers-color-scheme: light)').matches);
@@ -1967,6 +1985,7 @@
     toggleDialMode: toggleDialMode,
     renderTanglishState: renderTanglishState,
     fillSetupForm: fillSetupForm,
-    applyTheme: applyTheme
+    applyTheme: applyTheme,
+    nextTheme: nextTheme
   };
 })(typeof window !== 'undefined' ? window : globalThis);

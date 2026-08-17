@@ -502,6 +502,19 @@
     return Math.round(value);
   }
 
+  /**
+   * The one path that changes the theme, whichever control asked.
+   *
+   * The header button and the Appearance group are two views of one setting,
+   * so both go through here and both are re-rendered afterwards - otherwise
+   * using one leaves the other showing the theme you just left.
+   */
+  function setTheme(theme) {
+    Store.updateSettings({ theme: theme });
+    UI.applyTheme();
+    UI.renderSettingsSummaries(Notify);
+  }
+
   function saveSettings() {
     var hours = Number(el.setDailyTarget.value);
     if (!isFinite(hours) || hours <= 0 || hours > 24) {
@@ -1264,10 +1277,13 @@
     el.settingsBody.addEventListener('click', function (event) {
       var option = event.target.closest('[data-theme-choice]');
       if (!option) return;
-      Store.updateSettings({ theme: option.getAttribute('data-theme-choice') });
-      UI.applyTheme();
-      UI.renderSettingsSummaries(Notify);
+      setTheme(option.getAttribute('data-theme-choice'));
     });
+
+    // The header shortcut. Same setting, one button, so it cycles rather than
+    // toggles - dropping "match phone" would take away the only mode that
+    // changes by itself at sunset.
+    bindIfPresent(el.themeBtn, 'click', function () { setTheme(UI.nextTheme()); });
 
     el.setupSaveBtn.addEventListener('click', function () { finishSetup(true); });
     el.setupSkipBtn.addEventListener('click', function () { finishSetup(false); });
