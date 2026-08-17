@@ -1494,13 +1494,29 @@
    *
    * theme-color follows, or the phone's status bar stays black over a white app.
    */
-  var THEME_ORDER = ['system', 'light', 'dark'];
   var THEME_LABELS = { system: 'matching your phone', light: 'light', dark: 'dark' };
 
-  /** What the header button will switch to next. */
+  function systemPrefersLight() {
+    return !!(global.matchMedia && global.matchMedia('(prefers-color-scheme: light)').matches);
+  }
+
+  /**
+   * What the header button will switch to next: light or dark, nothing else.
+   *
+   * "Match phone" is still a choice in Appearance, but it is not a stop on the
+   * header button's route. That button is a one-tap glance control and a
+   * three-way cycle through it means the tap meant to darken the screen lands on
+   * the OS setting instead, which on a phone already set to dark looks like the
+   * button did nothing at all.
+   *
+   * From `system` it flips away from whatever the phone is currently showing, so
+   * the first tap always changes something visible.
+   */
   function nextTheme() {
     var theme = Store.settings().theme || 'system';
-    return THEME_ORDER[(THEME_ORDER.indexOf(theme) + 1) % THEME_ORDER.length];
+    if (theme === 'dark') return 'light';
+    if (theme === 'light') return 'dark';
+    return systemPrefersLight() ? 'dark' : 'light';
   }
 
   function applyTheme() {
@@ -1516,8 +1532,7 @@
       el.themeBtn.title = label;
     }
 
-    var light = theme === 'light' || (theme === 'system' &&
-      global.matchMedia && global.matchMedia('(prefers-color-scheme: light)').matches);
+    var light = theme === 'light' || (theme === 'system' && systemPrefersLight());
 
     var meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute('content', light ? '#f2f5f3' : '#0b100e');

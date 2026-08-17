@@ -54,8 +54,9 @@
           <span class="notify-dot" id="notifyDot" hidden></span>
         </button>
 
-        <!-- Cycles match phone → light → dark. The same setting the Appearance
-             group holds; this is the shortcut, not a second source of truth.
+        <!-- Flips light ↔ dark, and nothing else. "Match phone" is still a choice
+             in the Appearance group, which is the same setting this writes; the
+             header is only the shortcut, not a second source of truth.
              Which icon shows is decided in CSS from [data-theme] on <html>, so
              it is right on the first paint without waiting for a script. -->
         <button type="button" class="icon-btn theme-btn" id="themeBtn" aria-label="Theme">
@@ -1075,6 +1076,10 @@
   <script src="./js/quips-english.js"></script>
   <script src="./js/quips-tanglish.js"></script>
   <script src="./js/quips.js"></script>
+  <!-- Both of these are also loaded by sw.js through importScripts, so they must
+       stay free of any DOM or localStorage use. -->
+  <script src="./js/handoff.js"></script>
+  <script src="./js/shift-card.js"></script>
   <script src="./js/notify.js"></script>
   <script src="./js/push.js"></script>
   <script src="./js/sync.js"></script>

@@ -95,14 +95,20 @@
 
     var wasResting = previous === S.BREAK || previous === S.LUNCH;
     var isResting = nextState === S.BREAK || nextState === S.LUNCH;
+    var summary = TL.summarize(day, Date.now());
 
     if (isResting) {
-      Notify.onBreakStarted(nextState, TL.lastEvent(day).t);
+      Notify.onBreakStarted(nextState, TL.lastEvent(day).t, summary.creditedMs);
       armServerReminder(nextState, TL.lastEvent(day).t);
     } else if (wasResting) {
       Notify.onBreakEnded();
       Push.disarm();
     }
+
+    // The worker needs the new state to redraw the notification and to know
+    // which of its own buttons still apply. Written here, on the transition,
+    // rather than on the tick - see publishSnapshot.
+    Notify.publishSnapshot(summary);
 
     renderAll();
     return true;
@@ -216,6 +222,13 @@
    * the user looks at the app they get the truth immediately.
    */
   function onBecameVisible() {
+    // Anything the worker settled from the shade goes into the log first. Judging
+    // the state before filing it would nag the user about a break they ended half
+    // an hour ago without opening the app.
+    drainHandoff().then(catchUp);
+  }
+
+  function catchUp() {
     var now = Date.now();
     lastTickAt = now;
     reconcile(now, true);
@@ -442,12 +455,17 @@
   function rearmRestingNotifications() {
     var summary = TL.summarize(currentDay(), Date.now());
 
+    // Published whether or not anything is running: it is what lets the worker
+    // end a break from the shade, and what stops it acting on a day that has
+    // already been closed or belongs to a profile nobody is looking at.
+    Notify.publishSnapshot(summary);
+
     if (summary.state !== S.BREAK && summary.state !== S.LUNCH) {
       Push.disarm();
       return;
     }
 
-    Notify.onBreakStarted(summary.state, summary.openSince);
+    Notify.onBreakStarted(summary.state, summary.openSince, summary.creditedMs);
     Notify.check(summary);
     armServerReminder(summary.state, summary.openSince);
   }
@@ -1404,25 +1422,89 @@
    *
    * The service worker cannot change a day on its own - the log lives in this
    * page's storage - so it launches with ?a=… and the action is completed here
-   * on boot. Same functions the timer screen's buttons call, and the same
-   * toggling, so "Break" while already on one ends it.
+   * on boot. Same functions the timer screen's buttons call.
+   *
+   * These do not toggle, unlike the lock-screen buttons of the same name. This
+   * path is also the worker's fallback when a page did not confirm a message,
+   * and a page that answers late would then have run the action once already -
+   * a toggle would undo it. Every one of these refuses a state it does not
+   * apply to, so arriving twice is a no-op rather than a reversal. Nothing is
+   * lost: the notification only offers Break while the clock is running.
    */
   var LAUNCH_ACTIONS = {
-    resume: function () {
-      var state = currentState();
-      if (state === S.BREAK || state === S.LUNCH || state === S.PAUSED) actResume();
-    },
-    'break': function () {
-      if (currentState() === S.BREAK) actResume(); else actBreak();
-    },
-    lunch: function () {
-      if (currentState() === S.LUNCH) actResume(); else actLunch();
-    },
-    pause: function () {
-      if (currentState() === S.PAUSED) actResume(); else actPause();
-    },
+    resume: actResume,
+    'break': actBreak,
+    lunch: actLunch,
+    pause: actPause,
     end: function () { actEndDay(true); }
   };
+
+  /* -------------------------------------------------------------- handoff */
+
+  /**
+   * File the break and lunch taps the service worker took while the app was
+   * closed. See js/handoff.js for why it cannot write them itself.
+   *
+   * Each entry carries the moment it was tapped, so a break ended at 14:32 and
+   * filed at 18:00 is still a break that ended at 14:32. That is only true
+   * because a day is a list of timestamps and nothing anywhere counts elapsed
+   * time - the same property that makes the app correct across a sleeping phone
+   * makes it correct across a deferred tap.
+   */
+  var HANDOFF_STATES = {
+    'break': { from: [S.WORKING, S.MEETING], to: S.BREAK },
+    lunch: { from: [S.WORKING, S.MEETING], to: S.LUNCH },
+    'resume-work': { from: [S.BREAK, S.LUNCH], to: S.WORKING }
+  };
+
+  /**
+   * Write one queued tap into the log. Returns true if the day changed.
+   *
+   * The tap belongs to the day it happened on, which is not always today: a
+   * break ended at 23:58 and filed the next morning has to close yesterday's
+   * break rather than open a hole in today. Refusing a state the action does not
+   * apply to is also what makes this safe to run twice on the same entry.
+   */
+  function fileHandoffEntry(entry) {
+    var rule = HANDOFF_STATES[entry.action];
+    if (!rule || !entry.t) return false;
+
+    var day = Store.ensureDay(TL.dateKeyOf(entry.t));
+    if (rule.from.indexOf(TL.currentState(day)) === -1) return false;
+    if (!TL.pushEvent(day, rule.to, entry.t)) return false;
+
+    Store.touchDay(day);
+    return true;
+  }
+
+  function drainHandoff() {
+    if (!global.T8Handoff) return Promise.resolve(false);
+
+    return global.T8Handoff.pending().then(function (list) {
+      if (!list.length) return false;
+
+      var ids = [];
+      var applied = 0;
+
+      for (var i = 0; i < list.length; i++) {
+        if (fileHandoffEntry(list[i])) applied++;
+        // Dropped either way. A tap that does not apply to the log never will,
+        // and keeping it would replay the same refusal on every launch.
+        ids.push(list[i].id);
+      }
+
+      if (applied) Store.save();
+
+      return global.T8Handoff.forget(ids).then(function () {
+        if (!applied) return false;
+        Sync.schedule('handoff');
+        reconcile(Date.now(), true);
+        renderAll();
+        rearmRestingNotifications();
+        return true;
+      });
+    }).catch(function () { return false; });
+  }
 
   function consumeLaunchAction() {
     var params = new URLSearchParams(global.location.search);
@@ -1477,18 +1559,26 @@
       onLunchRequest: function () {
         if (currentState() === S.LUNCH) actResume(); else actLunch();
       },
-      onEndDayRequest: function () { actEndDay(true); }
+      onEndDayRequest: function () { actEndDay(true); },
+      // The worker settled a break on its own and this page happens to be alive,
+      // so file it now rather than waiting for the next launch.
+      onDrainRequest: drainHandoff
     }).then(function (registration) {
       UI.renderReminderStatus(Notify);
-      consumeLaunchAction();
 
-      // Subscribe before re-arming, so a break already running is handed to
-      // the server on this launch rather than the next one.
-      return Push.connect(registration).then(function () {
-        // A break restored across a reload re-arms its keep-alive and ongoing
-        // notification, so closing the tab mid-break does not silence reminders.
-        rearmRestingNotifications();
-        UI.renderReminderStatus(Notify);
+      // Before the launch action, so its state guards see a log that already
+      // includes whatever the worker did while the app was closed.
+      return drainHandoff().then(function () {
+        consumeLaunchAction();
+
+        // Subscribe before re-arming, so a break already running is handed to
+        // the server on this launch rather than the next one.
+        return Push.connect(registration).then(function () {
+          // A break restored across a reload re-arms its keep-alive and ongoing
+          // notification, so closing the tab mid-break does not silence reminders.
+          rearmRestingNotifications();
+          UI.renderReminderStatus(Notify);
+        });
       });
     });
 

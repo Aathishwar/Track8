@@ -30,9 +30,17 @@
   'use strict';
 
   var TL = global.T8Timeline;
+  var Shift = global.T8Shift;
+  var Handoff = global.T8Handoff;
 
-  var TAG_ONGOING = 't8-ongoing';
+  var TAG_ONGOING = Shift.TAG;
   var TAG_NAG = 't8-nag';
+
+  // Borrowed from the shared card so the page and the worker format a time and a
+  // duration identically. A notification the worker redraws must not suddenly
+  // change how it writes 14:35.
+  var clock = Shift.clock;
+  var shortMs = Shift.shortMs;
 
   var swRegistration = null;
   var keepAliveEl = null;
@@ -90,13 +98,18 @@
   /**
    * The service worker relays notification-action taps back to us. If the app
    * was closed it reopens with ?a=resume instead, handled in app.js.
+   *
+   * `drain` is the other direction of the same conversation: the worker has just
+   * settled a break on its own and is telling a page that happens to be alive to
+   * write it into the log now rather than on the next launch.
    */
   var SW_ACTIONS = {
     'resume-work': 'onResumeRequest',
     'break': 'onBreakRequest',
     lunch: 'onLunchRequest',
     pause: 'onPauseRequest',
-    end: 'onEndDayRequest'
+    end: 'onEndDayRequest',
+    drain: 'onDrainRequest'
   };
 
   function listenForServiceWorkerMessages() {
@@ -104,7 +117,19 @@
     navigator.serviceWorker.addEventListener('message', function (event) {
       var data = event.data || {};
       var fn = callbacks[SW_ACTIONS[data.action]];
-      if (fn) fn();
+      if (!fn) return;
+
+      // Answer first, act second. Android goes on listing a window whose page it
+      // has already discarded, and a message posted into that ghost is dropped
+      // in silence - so the worker reads "no answer" as "no page" and reloads
+      // the window with the action in the URL instead. The reply therefore has
+      // to go out before the action runs, or a slow save would be mistaken for
+      // a dead page and cost the user a reload.
+      if (event.ports && event.ports[0]) {
+        try { event.ports[0].postMessage({ ok: true }); } catch (e) { /* older worker, no port */ }
+      }
+
+      fn();
     });
   }
 
@@ -488,12 +513,6 @@
     return counted + ' counted';
   }
 
-  function shortMs(ms) {
-    var mins = Math.max(0, Math.round(ms / 60000));
-    var h = Math.floor(mins / 60);
-    return h > 0 ? h + 'h ' + (mins % 60) + 'm' : mins + 'm';
-  }
-
   /**
    * Push the current state to the OS.
    *
@@ -570,7 +589,7 @@
     // "control Track8 without unlocking the phone", and a shade entry that
     // outlived the card the user turned off would read as a bug.
     if (open && lockScreenEnabled()) {
-      postShiftNotification(summary.state, summary.openSince, summary.creditedMs);
+      postShiftNotification(summary.state, summary.openSince, creditedBefore(summary));
     } else if (!(cfg && cfg.resting)) {
       clearShiftNotification();
     }
@@ -702,23 +721,6 @@
   var OVERTIME = { kind: 'OVERTIME', label: 'Day complete', icon: '🎯' };
 
   /**
-   * Body of the pinned notification.
-   *
-   * States the clock time the user is due back, not just the length of the
-   * allowance. The nagging layer needs our timers to still be running, and a
-   * phone that has frozen the page will not deliver it — but this notification
-   * was posted at the moment the break started, so it survives regardless. If
-   * everything else fails, the shade still answers "when should I be back?".
-   */
-  function clock(ms) {
-    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-
-  function ongoingBody(cfg, since) {
-    return 'Started ' + clock(since) + '. Tap "End ' + cfg.label.toLowerCase() + '" when you are back.';
-  }
-
-  /**
    * The pinned entry that follows the whole shift.
    *
    * The media card the OS draws is limited to transport buttons - previous,
@@ -727,86 +729,77 @@
    * can say what it does, and it shows on the lock screen too, so this carries
    * the named ones and the card carries the picture and the progress.
    *
-   * Android allows two actions on most builds and truncates the rest, so the
-   * order is deliberate: whatever this state most needs comes first.
+   * What it says and which buttons it carries live in js/shift-card.js, because
+   * the service worker redraws this same notification when a break is ended from
+   * the shade with the app closed. One description, two writers.
+   *
+   * The snapshot doubles as what the worker reads to know a break is running at
+   * all, which is why it names the allowances rather than the alert config: the
+   * worker has no access to settings.
    */
-  var SHIFT_ACTIONS = {
-    WORKING: [
-      { action: 'break', title: '☕ Break' },
-      { action: 'lunch', title: '🍱 Lunch' },
-      { action: 'pause', title: '⏸ Pause' }
-    ],
-    MEETING: [
-      { action: 'break', title: '☕ Break' },
-      { action: 'lunch', title: '🍱 Lunch' }
-    ],
-    BREAK: [
-      { action: 'resume', title: 'End break' },
-      { action: 'lunch', title: '🍱 Lunch instead' }
-    ],
-    LUNCH: [
-      { action: 'resume', title: 'End lunch' },
-      { action: 'break', title: '☕ Break instead' }
-    ],
-    PAUSED: [
-      { action: 'resume', title: '▶ Back on the clock' },
-      { action: 'end', title: 'End day' }
-    ]
-  };
+  function snapshotOf(state, since, creditedBeforeMs) {
+    var s = global.T8Store.settings();
+    return {
+      state: state,
+      openSince: since,
+      creditedBeforeMs: creditedBeforeMs,
+      breakAlertMinutes: s.breakAlertMinutes,
+      breakRepeatMinutes: s.breakRepeatMinutes,
+      lunchAlertMinutes: s.lunchAlertMinutes,
+      lunchRepeatMinutes: s.lunchRepeatMinutes
+    };
+  }
 
-  var SHIFT_TITLES = {
-    WORKING: '⏱️ On the clock',
-    MEETING: '👥 In a meeting',
-    PAUSED: '⏸️ Paused'
-  };
+  /**
+   * Credited time banked before the open segment began.
+   *
+   * `summary.creditedMs` counts the open segment up to now, which is right for
+   * the screen and wrong for anything stored: see the note in js/shift-card.js
+   * about the same stretch being counted twice.
+   */
+  function creditedBefore(summary) {
+    var open = Shift.counting(summary.state) ? summary.openMs : 0;
+    return Math.max(0, summary.creditedMs - open);
+  }
+
+  /**
+   * Leave the worker enough of the day to redraw the notification and to settle
+   * a break on its own.
+   *
+   * Called on transitions, never per tick - an IndexedDB write a second is a
+   * battery bug on a phone in a pocket. Transition-time is enough because the
+   * only numbers in it that move are credited time, and credited time is frozen
+   * for the whole of a break, which is exactly when the worker needs to read it.
+   *
+   * A day that is idle or ended has its snapshot removed instead, or the worker
+   * would go on offering to end a break that finished yesterday.
+   */
+  function publishSnapshot(summary) {
+    if (!Handoff) return Promise.resolve(false);
+    if (!summary || summary.state === 'IDLE' || summary.state === TL.STATES.ENDED) {
+      return Handoff.clearSnapshot();
+    }
+    return Handoff.putSnapshot(snapshotOf(summary.state, summary.openSince, creditedBefore(summary)));
+  }
 
   // What was last posted, so a notification that has not changed is not
   // re-posted every second - which on Android is a visible flicker in the shade.
   var lastShiftKey = '';
 
-  function shiftBody(state, since, creditedMs) {
-    var cfg = config(state);
-    // Ahead of the resting branch, which a pause also matches: a pause has a
-    // nag but no "due back", and quoting one would invent an agreement the
-    // user never made.
-    if (state === TL.STATES.PAUSED) return 'Paused at ' + clock(since) + '. Not counting.';
-    if (cfg && cfg.resting) {
-      return 'Started ' + clock(since) + ', due back ' +
-        clock(since + cfg.firstMinutes * 60000) + '. Not counting.';
-    }
-    return shortMs(creditedMs) + ' counted today. Since ' + clock(since) + '.';
-  }
-
-  function shiftTitle(state, since) {
-    var cfg = config(state);
-    // The time is in the title because that is the only line Android renders
-    // in bold - a notification body is plain text with no markup of any kind.
-    if (cfg && cfg.resting && state !== TL.STATES.PAUSED) {
-      return cfg.icon + ' ' + cfg.label + ' · back by ' + clock(since + cfg.firstMinutes * 60000);
-    }
-    return SHIFT_TITLES[state] || '⏱️ Track8';
-  }
-
-  function postShiftNotification(state, since, creditedMs) {
-    var actions = SHIFT_ACTIONS[state];
-    if (!actions) { clearShiftNotification(); return; }
+  function postShiftNotification(state, since, creditedBeforeMs) {
+    var snap = snapshotOf(state, since, creditedBeforeMs);
+    if (!Shift.actions(snap)) { clearShiftNotification(); return; }
 
     // Re-post on the state changing or the minute turning, and not otherwise.
-    var key = state + '|' + Math.floor(creditedMs / 60000);
+    // Keyed on the minute the card will show rather than on banked time, which
+    // does not move while the clock runs and would freeze the shade at whatever
+    // it said when the shift started.
+    var now = Date.now();
+    var key = state + '|' + Math.floor(Shift.creditedAt(snap, now) / 60000);
     if (key === lastShiftKey) return;
     lastShiftKey = key;
 
-    show(shiftTitle(state, since), {
-      body: shiftBody(state, since, creditedMs),
-      tag: TAG_ONGOING,
-      renotify: false,
-      requireInteraction: true,
-      silent: true,
-      badge: './icons/badge-72.png',
-      icon: './icons/icon-192.png',
-      data: { kind: 'ongoing', state: state, since: since },
-      actions: actions
-    });
+    show(Shift.title(snap), Shift.options(snap, now));
   }
 
   function clearShiftNotification() {
@@ -818,11 +811,15 @@
    * A break has just begun. Pins its entry immediately rather than waiting for
    * the next tick, because the gap would be visible on the phone in the hand
    * that just tapped the button.
+   *
+   * `creditedBeforeMs` is the day's banked total, which for a resting state is
+   * simply its credited time - nothing is accruing. It does not reach the body of
+   * a break's notification, but it does decide when the entry is next re-posted.
    */
-  function onBreakStarted(state, since) {
+  function onBreakStarted(state, since, creditedBeforeMs) {
     nagCursor = { since: since, fired: -1 };
     startKeepAlive(true);
-    postShiftNotification(state, since, 0);
+    postShiftNotification(state, since, creditedBeforeMs || 0);
   }
 
   /** Break ended: drop the nag and let the shift entry catch up on the tick. */
@@ -1010,6 +1007,7 @@
   function init(options) {
     var opts = options || {};
     callbacks.onResumeRequest = opts.onResumeRequest || null;
+    callbacks.onDrainRequest = opts.onDrainRequest || null;
     MEDIA_ACTIONS.forEach(function (pair) { callbacks[pair[1]] = opts[pair[1]] || null; });
     listenForServiceWorkerMessages();
     return registerServiceWorker();
@@ -1025,6 +1023,7 @@
     buzz: buzz,
     vibrationSupported: vibrationSupported,
     check: check,
+    publishSnapshot: publishSnapshot,
     onBreakStarted: onBreakStarted,
     onBreakEnded: onBreakEnded,
     startKeepAlive: startKeepAlive,
