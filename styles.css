@@ -33,6 +33,8 @@
   --accent-dark: #0d9488;
   --accent-light: #5eead4;
   --accent-glow: rgba(32, 199, 181, 0.26);
+  /* Same as --accent here; see the light block for why they differ there. */
+  --accent-ink: #20c7b5;
 
   --amber-warning: #f59e0b;
   --amber-warning-dark: #d97706;
@@ -183,13 +185,18 @@
     --bg-surface-hover: #e4ecec;
     --bg-sunken: #eaf1f1;
 
-    --accent: #0f766e;
-    --accent-dark: #115e59;
-    --accent-light: #14887e;
-    --accent-glow: rgba(15, 118, 110, 0.16);
+    --accent: #0d9488;
+    --accent-dark: #0f766e;
+    --accent-light: #14b8a6;
+    --accent-glow: rgba(13, 148, 136, 0.18);
+    /* The accent as ink. A fill only has to clear 3:1 against the surface
+       behind it, which is what lets it be this bright on white; text has to
+       clear 4.5:1, which this teal does not. So the two part company in light
+       mode and are the same colour in the dark one. */
+    --accent-ink: #0f766e;
 
-    --activity-work: #0f766e;
-    --activity-work-dark: #115e59;
+    --activity-work: #0d9488;
+    --activity-work-dark: #0f766e;
     --activity-meeting: #4338ca;
     --activity-meeting-dark: #3730a3;
     --activity-break: #a16207;
@@ -207,17 +214,17 @@
     --text-muted: #53625f;
 
     --border-subtle: rgba(13, 25, 23, 0.12);
-    --border-accent: rgba(15, 118, 110, 0.42);
+    --border-accent: rgba(13, 148, 136, 0.5);
 
     --glass-bg: rgba(255, 255, 255, 0.93);
     --shadow-lg: 0 10px 26px rgba(13, 25, 23, 0.09), 0 2px 6px rgba(13, 25, 23, 0.05);
-    --shadow-glow: 0 6px 16px rgba(15, 118, 110, 0.22);
+    --shadow-glow: 0 6px 16px rgba(13, 148, 136, 0.24);
     --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 60%);
   --chrome-bg: rgba(238, 243, 243, 0.9);
   --hairline-hard: rgba(13, 25, 23, 0.28);
   --track-line: rgba(13, 25, 23, 0.12);
   --rest-track: rgba(13, 25, 23, 0.16);
-  --on-primary: #ffffff;
+  --on-primary: #04211f;
   }
 }
 
@@ -232,13 +239,14 @@
   --bg-surface-hover: #e4ecec;
   --bg-sunken: #eaf1f1;
 
-  --accent: #0f766e;
-  --accent-dark: #115e59;
-  --accent-light: #14887e;
-  --accent-glow: rgba(15, 118, 110, 0.16);
+  --accent: #0d9488;
+  --accent-dark: #0f766e;
+  --accent-light: #14b8a6;
+  --accent-glow: rgba(13, 148, 136, 0.18);
+  --accent-ink: #0f766e;
 
-  --activity-work: #0f766e;
-  --activity-work-dark: #115e59;
+  --activity-work: #0d9488;
+  --activity-work-dark: #0f766e;
   --activity-meeting: #4338ca;
   --activity-meeting-dark: #3730a3;
   --activity-break: #a16207;
@@ -255,17 +263,17 @@
   --text-muted: #53625f;
 
   --border-subtle: rgba(13, 25, 23, 0.12);
-  --border-accent: rgba(15, 118, 110, 0.42);
+  --border-accent: rgba(13, 148, 136, 0.5);
 
   --glass-bg: rgba(255, 255, 255, 0.93);
   --shadow-lg: 0 10px 26px rgba(13, 25, 23, 0.09), 0 2px 6px rgba(13, 25, 23, 0.05);
-  --shadow-glow: 0 6px 16px rgba(15, 118, 110, 0.22);
+  --shadow-glow: 0 6px 16px rgba(13, 148, 136, 0.24);
   --sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(255, 255, 255, 0) 60%);
   --chrome-bg: rgba(238, 243, 243, 0.9);
   --hairline-hard: rgba(13, 25, 23, 0.28);
   --track-line: rgba(13, 25, 23, 0.12);
   --rest-track: rgba(13, 25, 23, 0.16);
-  --on-primary: #ffffff;
+  --on-primary: #04211f;
 }
 
 * {
@@ -429,7 +437,7 @@ body.modal-open {
 
 .sub-badge {
   font-size: 11px;
-  color: var(--accent-light);
+  color: var(--accent-ink);
   font-weight: 600;
 }
 
@@ -495,7 +503,7 @@ body.modal-open {
 }
 
 .notify-btn.enabled {
-  color: var(--accent);
+  color: var(--accent-ink);
   border-color: var(--border-accent);
 }
 
@@ -626,7 +634,7 @@ body.modal-open {
 }
 
 .person-check {
-  color: var(--accent);
+  color: var(--accent-ink);
   font-weight: 700;
 }
 
@@ -645,7 +653,7 @@ body.modal-open {
   background: none;
   border: none;
   border-radius: var(--radius-sm);
-  color: var(--accent);
+  color: var(--accent-ink);
   font: inherit;
   font-size: 13px;
   font-weight: 600;
@@ -790,7 +798,7 @@ body.modal-open {
 }
 
 .status-working {
-  color: var(--accent);
+  color: var(--accent-ink);
   background: rgba(32, 199, 181, 0.12);
   border-color: var(--border-accent);
 }
@@ -828,7 +836,7 @@ body.modal-open {
 }
 
 .status-finished {
-  color: var(--accent-light);
+  color: var(--accent-ink);
   background: rgba(94, 234, 212, 0.12);
   border-color: rgba(94, 234, 212, 0.3);
 }
@@ -1190,16 +1198,21 @@ body.modal-open {
 /* Split-flap clock.
    Sized from --ring-size rather than from the viewport, because the one
    constraint that matters is fitting inside the circle it sits in - and the
-   ring is already clamped against vh and vw. At the ring's floor this works out
-   near 18px, at its ceiling near 30px, and the row stays inside the stroke at
-   both ends. */
+   ring is already clamped against vh and vw.
+
+   The multiplier is solved, not chosen. The row is a rectangle inscribed in the
+   circle the break arc draws, so with width a·f and height b·f against that
+   arc's inner radius R, it fits while f <= 2R / sqrt(a² + b²). Measured, the
+   row runs 5.8em wide and 1.48em tall, which puts the ceiling at 0.117 of the
+   ring; 0.112 leaves a hair of air. The previous 0.135 predated the arc moving
+   inwards and overhung it by 22-41px at every size. */
 .timer-digits {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 2px;
   font-family: var(--font-mono);
-  font-size: clamp(16px, calc(var(--ring-size) * 0.135), 30px);
+  font-size: clamp(14px, calc(var(--ring-size) * 0.105), 24px);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   /* Shallow enough that the falling flap has some depth, deep enough that it
@@ -1357,14 +1370,14 @@ body.modal-open {
   padding: 2px 7px;
   border-radius: var(--radius-full);
   background: rgba(32, 199, 181, 0.15);
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 11px;
   font-weight: 700;
 }
 
 .percentage-badge.over {
   background: rgba(94, 234, 212, 0.2);
-  color: var(--accent-light);
+  color: var(--accent-ink);
 }
 
 /* Sits beside the percentage and carries what the banner below used to say -
@@ -1685,7 +1698,7 @@ body.modal-open {
   border: 1px solid var(--border-accent);
   border-radius: var(--radius-full);
   background: rgba(32, 199, 181, 0.1);
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -1749,7 +1762,7 @@ body.modal-open {
 .target-label {
   font-size: 10px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-ink);
   background: var(--bg-surface);
   padding: 1px 5px;
   border-radius: var(--radius-sm);
@@ -1892,7 +1905,7 @@ body.modal-open {
 }
 
 .bar-column.today .bar-day {
-  color: var(--accent);
+  color: var(--accent-ink);
   font-weight: 700;
 }
 
@@ -1998,7 +2011,7 @@ body.modal-open {
   font-family: var(--font-mono);
   font-size: 24px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .dn-centre small {
@@ -2100,7 +2113,7 @@ body.modal-open {
 .theme-option.active {
   border-color: var(--border-accent);
   background: var(--accent-glow);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* ---------------------------------------------------------- summary grid */
@@ -2163,7 +2176,7 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
 }
 
-.summary-value.positive { color: var(--accent); }
+.summary-value.positive { color: var(--accent-ink); }
 .summary-value.negative { color: var(--amber-warning); }
 
 /* ----------------------------------------------------------------- calendar */
@@ -2198,7 +2211,7 @@ body.modal-open {
   font-variant-numeric: tabular-nums;
 }
 
-.legend-hours.met   { color: var(--accent); }
+.legend-hours.met   { color: var(--accent-ink); }
 .legend-hours.short { color: var(--amber-warning); }
 
 .dot-completed { background: var(--accent); box-shadow: 0 0 6px var(--accent-glow); }
@@ -2316,7 +2329,7 @@ body.modal-open {
   letter-spacing: -0.2px;
 }
 
-.cal-day-hours.met   { color: var(--accent); }
+.cal-day-hours.met   { color: var(--accent-ink); }
 .cal-day-hours.short { color: var(--amber-warning); }
 
 /* ------------------------------------------------------------- bottom nav */
@@ -2363,7 +2376,7 @@ body.modal-open {
 }
 
 .nav-item.active {
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 /* Small lift on the selected tab's icon. One transform on one 19px element. */
@@ -2682,8 +2695,8 @@ input:focus {
   font-weight: 600;
 }
 
-.detail-val.accent   { color: var(--accent); }
-.detail-val.positive { color: var(--accent); }
+.detail-val.accent   { color: var(--accent-ink); }
+.detail-val.positive { color: var(--accent-ink); }
 .detail-val.negative { color: var(--amber-warning); }
 
 .empty-note {
@@ -2794,7 +2807,7 @@ input:focus {
   flex-shrink: 0;
   border-radius: var(--radius-sm);
   background: rgba(32, 199, 181, 0.12);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .settings-group-text {
@@ -2882,7 +2895,7 @@ input:focus {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.7px;
-  color: var(--accent);
+  color: var(--accent-ink);
   margin-bottom: 10px;
 }
 
@@ -2918,7 +2931,7 @@ input:focus {
   width: 20px;
   height: 20px;
   margin-top: 2px;
-  accent-color: var(--accent);
+  accent-color: var(--accent-ink);
   flex-shrink: 0;
 }
 
@@ -3157,7 +3170,7 @@ input:focus {
   background: none;
   border: none;
   padding: 4px 2px;
-  color: var(--accent);
+  color: var(--accent-ink);
   font: inherit;
   font-size: 12.5px;
   font-weight: 600;
@@ -3211,7 +3224,7 @@ input:focus {
   transform: translate(-50%, 0);
 }
 
-.toast.ok   { border-color: var(--border-accent); color: var(--accent-light); }
+.toast.ok   { border-color: var(--border-accent); color: var(--accent-ink); }
 .toast.warn { border-color: rgba(245, 158, 11, 0.45); color: #fcd9a0; }
 
 /* --------------------------------------------------------------- walkthrough */
@@ -3255,7 +3268,7 @@ input:focus {
   font-weight: 600;
   letter-spacing: 0.5px;
   text-transform: uppercase;
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .tour-title {
@@ -3298,10 +3311,12 @@ input:focus {
     align-items: center;
   }
 
-  /* Still fluid. A flat 38px here used to win over the clamp on a landscape
-     phone — wide enough to match, far too short to spend the height on. */
+  /* Still fluid, and still measured against the ring rather than the viewport:
+     a flat 38px here used to win over the clamp on a landscape phone - wide
+     enough to match, far too short to spend the height on - and 4.4vh replaced
+     that with a value that overhung the break arc by 41px on a desktop. */
   .timer-digits {
-    font-size: clamp(30px, 4.4vh, 42px);
+    font-size: clamp(18px, calc(var(--ring-size) * 0.105), 30px);
   }
 }
 

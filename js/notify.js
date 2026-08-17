@@ -153,12 +153,19 @@
    *
    * Android freezes background tabs but exempts pages that are playing media,
    * which is what keeps layer 2's timers running with the screen off. The
-   * amplitude is 1/32767 of full scale - inaudible, but real samples, because
-   * some engines discard a track that is digitally pure silence.
+   * amplitude is a hair off silence - inaudible, but real samples, because some
+   * engines discard a track that is digitally pure silence.
+   *
+   * Ten seconds, not one. Keeping the page awake never cared how long the loop
+   * was, but Chrome does not hand a short clip the media session - anything
+   * under about five seconds is treated as a UI sound effect, gets no audio
+   * focus, and therefore never draws the lock-screen card. A one-second loop
+   * kept the timers running and produced no card at all, which is the single
+   * most likely reason the lock screen looked broken.
    */
   function buildSilentTrackUrl() {
     var sampleRate = 8000;
-    var seconds = 1;
+    var seconds = 10;
     var frames = sampleRate * seconds;
     var dataBytes = frames * 2;
     var buffer = new ArrayBuffer(44 + dataBytes);
@@ -182,8 +189,18 @@
     writeAscii(36, 'data');
     view.setUint32(40, dataBytes, true);
 
+    // A 40Hz sine rather than an alternating ±1, which was a full-scale-Nyquist
+    // tone kept inaudible only by being one bit tall. Browsers decide whether a
+    // page is "making a sound" by measuring signal power, and a one-bit signal
+    // can read as silence - which loses both the media session and, on some
+    // builds, the background exemption the whole keep-alive exists for. 40Hz at
+    // this level is below what a phone speaker can reproduce and far below
+    // hearing on headphones, but it is unambiguously a signal. A whole number
+    // of cycles per loop, so the seam does not click.
+    var cycles = Math.round(40 * seconds);
+    var peak = 0.05 * 32767;
     for (var f = 0; f < frames; f++) {
-      view.setInt16(44 + f * 2, (f % 2 === 0) ? 1 : -1, true);
+      view.setInt16(44 + f * 2, Math.round(peak * Math.sin(2 * Math.PI * cycles * f / frames)), true);
     }
 
     return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
@@ -202,8 +219,19 @@
       keepAliveUrl = buildSilentTrackUrl();
       keepAliveEl = new Audio(keepAliveUrl);
       keepAliveEl.loop = true;
-      keepAliveEl.volume = 0.01;
+      // Not 0, and not near enough to 0 to be mistaken for it: a muted or
+      // effectively-silent element is denied audio focus, and audio focus is
+      // what the lock-screen card is drawn for. 0.05 of a 40Hz tone is still
+      // nothing any phone speaker can reproduce.
+      keepAliveEl.volume = 0.05;
       keepAliveEl.setAttribute('playsinline', '');
+      keepAliveEl.setAttribute('aria-hidden', 'true');
+      // In the document, not floating detached. An audio element with no
+      // `controls` renders nothing, so this costs no layout - but a player the
+      // browser can see in the page is the case every implementation of media
+      // controls is written for, and a detached one is not worth betting the
+      // lock-screen card on.
+      document.body.appendChild(keepAliveEl);
 
       // If this track stops while a break is still open, we did not stop it —
       // the phone did, and layer 2 died with it. We cannot react at the time,
