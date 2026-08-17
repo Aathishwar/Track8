@@ -29,17 +29,31 @@
 
   var TAG = 't8-ongoing';
 
-  /* Android renders two actions on most builds and truncates the rest, so the
-     order is deliberate: whatever this state most needs comes first.
+  /* One button or two, never three, and never a destructive one beside a routine
+     one.
 
-     A break and a lunch carry one button and no more. Offering "lunch instead"
+     Android lays these out as a single row of text buttons splitting the width
+     between them, so the count decides the size of the target. Three buttons on
+     a phone leaves each about a thumb's width and they are mis-hit: a tap meant
+     for Break landed on Lunch. Two buttons take half the row each, which is the
+     one shape that reads unambiguously - Break on the left, Lunch on the right.
+
+     Pause is not here for that reason. It is the least urgent thing this card
+     could offer and it was costing the two that matter their room; it is a tap
+     away in the app.
+
+     End day is not here either, and that one was doing real damage. It sat next
+     to "Back on the clock", so a miss ended the whole day instead of resuming it.
+     The lock screen still reaches it without unlocking, through the media card's
+     stop button, where nothing benign is adjacent to it.
+
+     A break and a lunch carry one button, full width. Offering "lunch instead"
      mid-break was a second way to be wrong about which one you are on, and the
      only reason anyone opens that notification is to end the thing running. */
   var ACTIONS = {
     WORKING: [
       { action: 'break', title: '☕ Break' },
-      { action: 'lunch', title: '🍱 Lunch' },
-      { action: 'pause', title: '⏸ Pause' }
+      { action: 'lunch', title: '🍱 Lunch' }
     ],
     MEETING: [
       { action: 'break', title: '☕ Break' },
@@ -52,8 +66,7 @@
       { action: 'resume', title: 'End lunch' }
     ],
     PAUSED: [
-      { action: 'resume', title: '▶ Back on the clock' },
-      { action: 'end', title: 'End day' }
+      { action: 'resume', title: '▶ Back on the clock' }
     ]
   };
 
