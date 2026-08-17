@@ -57,7 +57,7 @@
    */
   function startOfWeekMs(date) {
     var d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    d.setDate(d.getDate() - d.getDay()); // Sunday-first, like UI.startOfWeek
     return d.getTime();
   }
 

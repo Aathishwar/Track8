@@ -194,7 +194,7 @@
       'setDailyTarget', 'setBreakAlert', 'setBreakRepeat', 'setLunchAlert', 'setLunchRepeat',
       'setStretchAlert', 'setStretchRepeat', 'setPauseAlert', 'setMeetingAlert',
       'setOvertimeReminder', 'sumTimers',
-      'setKeepAlive', 'setLockScreen', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
+      'setKeepAlive', 'setLockScreen', 'lockScreenStatus', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
       'permCard', 'permTitle', 'permSteps', 'permSite', 'permSiteUrl', 'copySiteBtn', 'recheckNotifyBtn',
       'keepAliveWarning', 'batterySteps', 'vibrateNote', 'pushStatus',
       'sumReminders', 'sumProfile', 'sumInstall', 'sumAccount', 'sumAppearance',
@@ -829,10 +829,11 @@
 
   /* ------------------------------------------------------------ week view */
 
+  /* The week runs Sunday to Saturday. Both charts, the calendar grid and the
+     week's arrows all read this, so it is the only place the choice is made. */
   function startOfWeek(date) {
     var d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-    var offset = (d.getDay() + 6) % 7; // Monday = 0
-    d.setDate(d.getDate() - offset);
+    d.setDate(d.getDate() - d.getDay()); // Sunday = 0, which getDay() already is
     return d;
   }
 
@@ -923,13 +924,13 @@
 
   function renderWeek(weekAnchor, now) {
     var days = Store.daysOf();
-    var monday = startOfWeek(weekAnchor);
-    var labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+    var weekStart = startOfWeek(weekAnchor);
+    var labels = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     var target = targetMs();
     var todayKey = TL.dateKeyOf(now);
 
     var entries = labels.map(function (label, i) {
-      var d = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + i);
+      var d = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + i);
       var key = TL.dateKeyOf(d);
       var day = days[key];
       var summary = day
@@ -946,7 +947,9 @@
         stackMs: summary.workMs + summary.meetingMs + summary.breakMs + summary.lunchMs,
         isToday: key === todayKey,
         isFuture: d.getTime() > now,
-        isWeekend: i >= 5
+        // Sunday is index 0 now and Saturday is 6, so the weekend is the
+        // two ends of the row rather than its tail.
+        isWeekend: i === 0 || i === 6
       };
     });
 
@@ -1013,7 +1016,7 @@
 
     // As with the calendar: replay the entry animation when the week on screen
     // changes, not on every re-render triggered by an unrelated button press.
-    var weekKey = TL.dateKeyOf(monday);
+    var weekKey = TL.dateKeyOf(weekStart);
     el.histogramBars.classList.toggle('animate', weekKey !== lastWeekKey);
     lastWeekKey = weekKey;
 
@@ -1026,17 +1029,17 @@
     var elapsedWeekdays = entries.filter(function (e) { return !e.isWeekend && !e.isFuture; }).length;
     var weekTarget = elapsedWeekdays * target;
 
-    var sunday = new Date(monday.getFullYear(), monday.getMonth(), monday.getDate() + 6);
+    var weekEnd = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6);
     el.weekRangeText.textContent =
-      monday.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' - ' +
-      sunday.toLocaleDateString([], { month: 'short', day: 'numeric' });
+      weekStart.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' - ' +
+      weekEnd.toLocaleDateString([], { month: 'short', day: 'numeric' });
 
     // Nothing is recorded ahead of today, so forward stops at the current
     // week and the way back is one tap rather than a count of arrow presses.
     // Both are set here rather than in the click handlers, so every path that
     // re-renders - a resume, a profile switch, midnight rollover - leaves them
     // correct.
-    var atCurrent = TL.dateKeyOf(monday) === TL.dateKeyOf(startOfWeek(new Date(now)));
+    var atCurrent = TL.dateKeyOf(weekStart) === TL.dateKeyOf(startOfWeek(new Date(now)));
     if (el.nextWeekBtn) el.nextWeekBtn.disabled = atCurrent;
     if (el.thisWeekBtn) el.thisWeekBtn.hidden = atCurrent;
     if (el.weekHeading) el.weekHeading.textContent = atCurrent ? 'This week' : 'Past week';
@@ -1073,7 +1076,7 @@
     if (el.nextMonthBtn) el.nextMonthBtn.disabled = atCurrentMonth;
     if (el.thisMonthBtn) el.thisMonthBtn.hidden = atCurrentMonth;
 
-    var firstIndex = (new Date(year, month, 1).getDay() + 6) % 7;
+    var firstIndex = new Date(year, month, 1).getDay();
     var totalDays = new Date(year, month + 1, 0).getDate();
 
     var fragment = document.createDocumentFragment();
@@ -1400,7 +1403,30 @@
     return push;
   }
 
+  /**
+   * Say, in words, whether the lock-screen card exists right now.
+   *
+   * Every state here is one somebody will hit and be unable to explain from
+   * looking at their phone: a browser that has no media session at all, a day
+   * that has not started, or a track the autoplay policy refused - which is
+   * indistinguishable from the feature being broken unless we say so.
+   */
+  var LOCK_SCREEN_NOTES = {
+    live: 'Active now - check your lock screen or pull down the shade; it sits with your music players.',
+    idle: 'Appears once you clock in. There is nothing for it to show before the day starts.',
+    off: 'Turned off. The card only exists while the silent track is playing.',
+    'needs-keepalive': 'Needs "Keep reminding with the screen off" above - that is the track the card is drawn for.',
+    blocked: 'Your browser blocked the track this launch. Tap any button in the app and it will start.',
+    unsupported: 'This browser has no media session, so it cannot put anything on the lock screen. iPhones are the usual case.'
+  };
+
+  function renderLockScreenStatus(notify) {
+    if (!el.lockScreenStatus || !notify.lockScreenState) return;
+    el.lockScreenStatus.textContent = LOCK_SCREEN_NOTES[notify.lockScreenState()] || '';
+  }
+
   function renderKeepAliveStatus(notify) {
+    renderLockScreenStatus(notify);
     if (!el.keepAliveWarning) return;
 
     var push = renderPushStatus();

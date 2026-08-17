@@ -39,6 +39,9 @@
   var keepAliveUrl = null;
   var stoppingOnPurpose = false;
   var keepAliveInterrupted = false;
+  // Set when the browser refuses to start the track. Without a gesture behind
+  // it there is no audio, and without audio there is no lock-screen card.
+  var keepAliveBlocked = false;
 
   // Nag bookkeeping for the currently open break/lunch segment.
   // Keyed by the segment's start timestamp so a new break resets it.
@@ -258,8 +261,10 @@
     // this is safe to call every tick.
     if (keepAliveEl.paused) {
       var play = keepAliveEl.play();
-      if (play && play.catch) {
+      if (play && play.then) {
+        play.then(function () { keepAliveBlocked = false; });
         play.catch(function (e) {
+          keepAliveBlocked = true;
           // Autoplay policy blocks this unless a gesture started it. Break and
           // lunch are always begun by a tap, so this should not normally fire.
           console.info('Track8: background keep-alive could not start; falling back to catch-up reminders.', e);
@@ -330,6 +335,23 @@
   function lockScreenEnabled() {
     var s = global.T8Store.settings();
     return !!(s.lockScreenControls && s.keepAliveEnabled);
+  }
+
+  /**
+   * Why there is or is not a card right now.
+   *
+   * The card is drawn by the OS, off-screen, from a track nobody can hear, so
+   * when it does not appear there is nothing to look at and no way to tell a
+   * blocked autoplay from an unsupported browser from a day that simply has
+   * not started. Settings says which.
+   */
+  function lockScreenState() {
+    if (!mediaSupported()) return 'unsupported';
+    if (!global.T8Store.settings().lockScreenControls) return 'off';
+    if (!global.T8Store.settings().keepAliveEnabled) return 'needs-keepalive';
+    if (keepAliveBlocked) return 'blocked';
+    if (!keepAliveActive()) return 'idle';
+    return 'live';
   }
 
   var MEDIA_ACTIONS = [
@@ -828,6 +850,7 @@
     onBreakEnded: onBreakEnded,
     startKeepAlive: startKeepAlive,
     stopKeepAlive: stopKeepAlive,
+    lockScreenState: lockScreenState,
     keepAliveActive: keepAliveActive,
     keepAliveWasInterrupted: keepAliveWasInterrupted,
     dueIndex: dueIndex,
