@@ -289,12 +289,13 @@ own label and packs them from the left, which is why the pair is roomy on deskto
 stretches two actions across the card) and tight enough on a phone to be mis-hit. **The label
 text is the only lever there is.**
 
-`ACTIONS` in `shift-card.js` therefore gives the working card two labels of deliberately
-different lengths, each padded with `U+2007` figure spaces — a printing character, so it is not
-collapsed the way a trailing plain space may be. That widens both targets and separates their
-centres. Whether the padding survives to the rendered button is **not documented anywhere and
-has to be confirmed on a real phone**; `BREAK_ONLY` at the top of that table is the escape
-hatch, and one button alone has nothing adjacent to mis-hit.
+That lever was tried and it lost. `ACTIONS` in `shift-card.js` carried two labels of
+deliberately different lengths, each padded with `U+2007` figure spaces to widen both targets
+and separate their centres; on the phone this app is for, the tap meant for Break still landed
+on Lunch. **The working card now carries one action.** `BREAK_ONLY` in that file is `true`;
+setting it back to `false` restores the padded pair for anyone who wants to retest on a newer
+Android. Lunch costs a tap in the app, which is the right way round — starting the wrong kind
+of rest without noticing is worse than unlocking the phone.
 
 Pause is not on the card: three buttons left each about a thumb's width and a tap meant for
 Break landed on Lunch. End day is not on it either — it sat beside "Back on the clock", so a

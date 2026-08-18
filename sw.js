@@ -20,7 +20,7 @@
    therefore go on drawing notifications from last week's copy of shift-card.js
    while the page in front of the user is running this week's. Changing the URL
    guarantees a fresh fetch rather than trusting the browser to compare bytes. */
-var VERSION = 'v16';
+var VERSION = 'v17';
 
 var CACHE = 'track8-shell-' + VERSION;
 
