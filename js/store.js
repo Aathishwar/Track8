@@ -41,7 +41,6 @@
     overtimeRepeatMinutes: 30,
     notificationsEnabled: false,
     keepAliveEnabled: true,    // silent-audio trick to survive screen-off
-    lockScreenControls: true,  // media-style card on the lock screen; needs the above
     vibrate: true,
     dialShowsRemaining: false, // dial counts up by default, down when tapped
     theme: 'system',           // 'system' | 'dark' | 'light'
@@ -49,6 +48,19 @@
     // are plain English until someone finds the five-tap easter egg.
     tanglishReminders: false
   };
+
+  /* Settings that used to exist. A stored copy outlives the feature it
+     configured, and sync would keep handing it back and forth between devices
+     forever, so retired keys are dropped on the way in.
+
+       lockScreenControls  the Media Session lock-screen card, removed along
+                           with the audio focus it held for the whole shift. */
+  var RETIRED_SETTINGS = ['lockScreenControls'];
+
+  function dropRetiredSettings(s) {
+    RETIRED_SETTINGS.forEach(function (key) { delete s[key]; });
+    return s;
+  }
 
   var state = null;
 
@@ -143,7 +155,7 @@
       persons: Array.isArray(raw.persons) ? raw.persons.filter(function (p) {
         return p && typeof p.id === 'string' && typeof p.name === 'string';
       }) : [],
-      settings: Object.assign({}, DEFAULT_SETTINGS, raw.settings || {}),
+      settings: dropRetiredSettings(Object.assign({}, DEFAULT_SETTINGS, raw.settings || {})),
       days: (raw.days && typeof raw.days === 'object') ? raw.days : {}
     };
 

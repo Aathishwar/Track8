@@ -20,7 +20,7 @@
    therefore go on drawing notifications from last week's copy of shift-card.js
    while the page in front of the user is running this week's. Changing the URL
    guarantees a fresh fetch rather than trusting the browser to compare bytes. */
-var VERSION = 'v15';
+var VERSION = 'v16';
 
 var CACHE = 'track8-shell-' + VERSION;
 
@@ -302,9 +302,9 @@ function apiJson(url, method, payload) {
  *
  * The record is keyed by the push endpoint, which belongs to this worker, so it
  * can do this itself. That matters more than it looks. The keep-alive audio
- * track and the lock-screen card are a page's to start and the worker cannot
- * fake either, so for a break begun from the shade with the app closed, the
- * server is the layer that actually delivers the reminder.
+ * track is a page's to start and the worker cannot fake it, so for a break
+ * begun from the shade with the app closed, the server is the layer that
+ * actually delivers the reminder.
  */
 function syncServerReminder(snap) {
   if (!self.registration.pushManager) return Promise.resolve(false);

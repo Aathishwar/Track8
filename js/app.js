@@ -390,9 +390,10 @@
   }
 
   /**
-   * @param unattended  True when the request came from the lock screen. A
-   *   `confirm()` cannot be answered by someone whose phone is locked - it
-   *   would block on a dialog nobody can see - so that path skips it. Ending
+   * @param unattended  True when the request came from a notification rather
+   *   than from the app. A `confirm()` cannot be answered by someone whose
+   *   phone is locked - it would block on a dialog nobody can see - so that
+   *   path skips it. Ending
    *   the day is recoverable either way: Reopen puts the clock back on without
    *   crediting the gap.
    */
@@ -634,7 +635,6 @@
       lunchAlertMinutes: Number(el.setLunchAlert.value) || 30,
       lunchRepeatMinutes: Number(el.setLunchRepeat.value) || 5,
       keepAliveEnabled: el.setKeepAlive.checked,
-      lockScreenControls: el.setLockScreen.checked,
       vibrate: el.setVibrate.checked,
       // A blank field is not a zero. Zero means "never nag me about this" and
       // has to survive being typed; an empty box means the person cleared it on
@@ -646,9 +646,6 @@
       overtimeReminder: el.setOvertimeReminder.checked
     });
 
-    // Only the master switch stops the track here. Turning the card off while
-    // a break is running must not kill the track that break's reminder needs -
-    // the next tick releases it if nothing else wants it.
     if (!el.setKeepAlive.checked) Notify.stopKeepAlive();
     renderAll();
     // Collapsed group headers quote these values, so they have to move too.
@@ -1355,7 +1352,7 @@
 
     [el.setDailyTarget, el.setBreakAlert, el.setBreakRepeat, el.setLunchAlert, el.setLunchRepeat,
       el.setStretchAlert, el.setStretchRepeat, el.setPauseAlert, el.setMeetingAlert,
-      el.setOvertimeReminder, el.setKeepAlive, el.setLockScreen, el.setVibrate].forEach(function (input) {
+      el.setOvertimeReminder, el.setKeepAlive, el.setVibrate].forEach(function (input) {
       input.addEventListener('change', saveSettings);
     });
     // Easter egg: five taps on the logo swap the reminder wording to Tanglish,
@@ -1520,8 +1517,8 @@
    * page's storage - so it launches with ?a=… and the action is completed here
    * on boot. Same functions the timer screen's buttons call.
    *
-   * These do not toggle, unlike the lock-screen buttons of the same name. This
-   * path is also the worker's fallback when a page did not confirm a message,
+   * These do not toggle. This path is also the worker's fallback when a page
+   * did not confirm a message,
    * and a page that answers late would then have run the action once already -
    * a toggle would undo it. Every one of these refuses a state it does not
    * apply to, so arriving twice is a no-op rather than a reversal. Nothing is
@@ -1637,24 +1634,21 @@
     });
     Sync.init();
 
-    // The lock-screen card's buttons. Each one is the same function the timer
-    // screen's button calls, so a tap from the lock screen is indistinguishable
-    // from a tap in the app - it saves, re-renders and re-arms identically.
-    // The transport buttons toggle, because the lock screen has one of each and
-    // the answer to "what does Break do while I am on a break?" has to be
-    // "ends it" rather than nothing.
+    // The pinned notification's buttons, relayed by the worker to this page.
+    // Each one is the function the timer screen's own button calls, so a tap
+    // from the shade is indistinguishable from a tap in the app - it saves,
+    // re-renders and re-arms identically.
+    //
+    // None of them toggle, and they are the same entries as LAUNCH_ACTIONS on
+    // purpose: the worker falls back to reloading the app at ?a=... when a page
+    // does not answer in time, so a page that answers late has already run the
+    // action and a toggle would undo it. Every one refuses a state it does not
+    // apply to, which makes arriving twice a no-op.
     Notify.init({
       onResumeRequest: actResume,
-      onPlayRequest: function () {
-        if (currentState() === 'IDLE') actStart(); else actResume();
-      },
       onPauseRequest: actPause,
-      onBreakRequest: function () {
-        if (currentState() === S.BREAK) actResume(); else actBreak();
-      },
-      onLunchRequest: function () {
-        if (currentState() === S.LUNCH) actResume(); else actLunch();
-      },
+      onBreakRequest: actBreak,
+      onLunchRequest: actLunch,
       onEndDayRequest: function () { actEndDay(true); },
       // The worker settled a break on its own and this page happens to be alive,
       // so file it now rather than waiting for the next launch.

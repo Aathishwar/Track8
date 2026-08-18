@@ -32,33 +32,56 @@
   /* One button or two, never three, and never a destructive one beside a routine
      one.
 
-     Android lays these out as a single row of text buttons splitting the width
-     between them, so the count decides the size of the target. Three buttons on
-     a phone leaves each about a thumb's width and they are mis-hit: a tap meant
-     for Break landed on Lunch. Two buttons take half the row each, which is the
-     one shape that reads unambiguously - Break on the left, Lunch on the right.
+     There is NO layout control here at all - no widths, no alignment, no gap,
+     no even split. Android draws each action as a text button sized to its own
+     label and packs them in from the left, so two short labels of the same
+     length produce two identical chips sitting against each other, which is
+     exactly how a tap meant for Break lands on Lunch. Desktop Chrome stretches
+     two actions across the whole card, which is why the same pair is roomy
+     there and cramped on a phone - the bug is invisible on the machine it is
+     written on.
 
-     Pause is not here for that reason. It is the least urgent thing this card
-     could offer and it was costing the two that matter their room; it is a tap
-     away in the app.
+     The only lever is the text, so the labels are deliberately different
+     lengths and padded with figure spaces (U+2007 - a printing character the
+     layout will not collapse or trim the way it may an ordinary space). The
+     padding widens both targets and pushes their centres apart, and the
+     different widths mean thumb and eye are aiming at two visibly different
+     objects rather than at "the left one" and "the right one".
+
+     If a phone still mis-hits them, set BREAK_ONLY to true: one button has the
+     row to itself and there is nothing adjacent to hit by mistake. Lunch then
+     costs a tap in the app.
+
+     Pause is not here. It is the least urgent thing this card could offer and
+     it was costing the two that matter their room.
 
      End day is not here either, and that one was doing real damage. It sat next
-     to "Back on the clock", so a miss ended the whole day instead of resuming it.
-     The lock screen still reaches it without unlocking, through the media card's
-     stop button, where nothing benign is adjacent to it.
+     to "Back on the clock", so a miss ended the whole day instead of resuming
+     it. Ending a day is worth unlocking the phone for; resuming a break is not.
 
-     A break and a lunch carry one button, full width. Offering "lunch instead"
-     mid-break was a second way to be wrong about which one you are on, and the
-     only reason anyone opens that notification is to end the thing running. */
+     A break and a lunch carry one button. Offering "lunch instead" mid-break
+     was a second way to be wrong about which one you are on, and the only
+     reason anyone opens that notification is to end the thing running. */
+
+  /* Flip to true to drop Lunch and leave Break with the row to itself. */
+  var BREAK_ONLY = false;
+
+  // Written as escapes rather than pasted characters: U+2007 is invisible in an
+  // editor and would not survive the first person who "tidied the whitespace".
+  var PAD = '\u2007';          // FIGURE SPACE - a printing character, not a gap
+  var COFFEE = '\u2615';
+  var BENTO = '\uD83C\uDF71';  // surrogate pair; no ES6 code-point escapes here
+
+  var WORKING_ACTIONS = BREAK_ONLY
+    ? [{ action: 'break', title: PAD + PAD + COFFEE + ' Break' + PAD + PAD }]
+    : [
+      { action: 'break', title: COFFEE + ' Break' + PAD + PAD + PAD },
+      { action: 'lunch', title: PAD + PAD + PAD + BENTO + ' Lunch break' }
+    ];
+
   var ACTIONS = {
-    WORKING: [
-      { action: 'break', title: '☕ Break' },
-      { action: 'lunch', title: '🍱 Lunch' }
-    ],
-    MEETING: [
-      { action: 'break', title: '☕ Break' },
-      { action: 'lunch', title: '🍱 Lunch' }
-    ],
+    WORKING: WORKING_ACTIONS,
+    MEETING: WORKING_ACTIONS,
     BREAK: [
       { action: 'resume', title: 'End break' }
     ],
@@ -66,7 +89,7 @@
       { action: 'resume', title: 'End lunch' }
     ],
     PAUSED: [
-      { action: 'resume', title: '▶ Back on the clock' }
+      { action: 'resume', title: '\u25B6 Back on the clock' }
     ]
   };
 

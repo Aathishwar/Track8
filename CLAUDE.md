@@ -138,6 +138,13 @@ day editor therefore refuses a correction that would finish later than now (`sav
 before midnight. Without it the carried day looks like a shift that opened with a meeting,
 and finishing that meeting clocks the user in for the rest of the night.
 
+**The pinned card and the keep-alive track have different lifetimes.** `syncBackground()` in
+`notify.js`. The card is posted for the whole open day, because its buttons are how a break is
+*started* without unlocking the phone; the silent track is held only through a break or lunch,
+because that is the only stretch layer 2 has to nag through. Tying the card to the track — which
+is what the retired lock-screen setting did — left the shade empty all morning and produced the
+card only once a break was already running, which is the half nobody needs.
+
 **Storage is written on state transitions only, never per second.** The tick path touches
 text nodes and one stroke offset. If you find yourself calling `Store.save()` from a render
 function, that is a battery bug on a phone in a pocket.
@@ -204,8 +211,12 @@ measured reads zero and the line stayed at the fallback. If you add or resize an
 between the wrapper's top edge and the bottom of a bar — the value caption, the label row,
 either gap — update `--bar-chrome` and `--bar-base-offset` with it.
 
-**Bump `VERSION` in `sw.js`** when shell files are added or removed, and add new `js/*.js` to
-`SHELL`. The fetch handler is network-first with cache fallback, so an update lands on the
+**Bump `VERSION` in `sw.js`** when shell files are added or removed, when a new `js/*.js` joins
+`SHELL`, **and whenever `js/handoff.js` or `js/shift-card.js` changes at all** — those two are
+pulled into the worker by version-stamped `importScripts`, so an edit without a bump leaves
+phones drawing notifications from the old copy. That has already happened once: commit c5fbc0c
+rewrote the card's `ACTIONS` and bumped nothing, so a worker installed before it kept offering
+the three-button row this project had just removed. The fetch handler is network-first with cache fallback, so an update lands on the
 next load, but the precache list still has to be right for offline.
 
 `VERSION` names the cache *and* is stamped onto the `importScripts` URLs, which is the half
@@ -267,16 +278,28 @@ in the title, which is why the pinned notification says "back by 14:35" up there
 carries the elapsed time. Do not add markup to a body expecting it to render; it prints
 verbatim.
 
-**Two notification actions, never three, and never a destructive one beside a routine one.**
-`ACTIONS` in `shift-card.js`. Android lays actions out as one row and sizes each button to its
-own label, so three on a phone leaves each about a thumb's width and they get mis-hit — a tap
-meant for Break landed on Lunch, which is why Pause is not on that card. Worse, End day used
-to sit next to "Back on the clock" on the paused card, so a miss closed the whole day instead
-of resuming it; end-day is still reachable without unlocking, through the media card's `stop`,
-where nothing benign is adjacent. There is also **no way to control the layout** — no widths,
-no alignment, no even split. Desktop Chrome stretches two actions across the card and Android
-packs them left as content-sized chips. The only lever is how many buttons and what they say,
-so keep paired labels the same length.
+**Two notification actions is the platform's hard ceiling, and their layout is not ours.**
+`Notification.maxActions` is **2** on Chrome for Android and the API *rejects* a longer array
+rather than trimming it. Action `icon`s are silently discarded on Android 7 and newer, so an
+icon cannot be used to tell two buttons apart. Chrome's `addAction()` goes straight to
+`android.app.Notification.Builder`, the same call a native app makes, so this card is drawn by
+the same system widget that draws Teams' "Join"/"Later" — there is no cramped web treatment to
+escape, and no widths, alignment, gap or even split to set. The widget sizes each button to its
+own label and packs them from the left, which is why the pair is roomy on desktop Chrome (it
+stretches two actions across the card) and tight enough on a phone to be mis-hit. **The label
+text is the only lever there is.**
+
+`ACTIONS` in `shift-card.js` therefore gives the working card two labels of deliberately
+different lengths, each padded with `U+2007` figure spaces — a printing character, so it is not
+collapsed the way a trailing plain space may be. That widens both targets and separates their
+centres. Whether the padding survives to the rendered button is **not documented anywhere and
+has to be confirmed on a real phone**; `BREAK_ONLY` at the top of that table is the escape
+hatch, and one button alone has nothing adjacent to mis-hit.
+
+Pause is not on the card: three buttons left each about a thumb's width and a tap meant for
+Break landed on Lunch. End day is not on it either — it sat beside "Back on the clock", so a
+miss closed the whole day instead of resuming it. Keep paired labels different lengths, and
+never put a destructive action beside a routine one.
 
 **`postMessage` to a window client is not proof of delivery.** Android goes on listing a window
 client after it has discarded the page behind it, so the message vanishes and `focus()` reloads
@@ -291,8 +314,8 @@ in `notify.js`), or a slow save reads as a dead page and costs the user a reload
 one is running", which was fine when only a cold launch reached it. It is now also the
 worker's fallback when a page did not answer, and a page that answers late has already run the
 action — a toggle would undo it. Every entry refuses a state it does not apply to, so arriving
-twice is a no-op. The lock-screen media buttons still toggle, because there is one of each and
-"what does Break do while I am on a break?" has to be "ends it".
+twice is a no-op. `Notify.init()` in `app.js` is handed the same non-toggling functions for
+the message path, so both routes to an action behave identically.
 
 **The worker settles break and lunch itself; everything else opens the app.** `IN_PLACE` in
 `sw.js`. It cannot write the day — the event log is in the page's `localStorage` — so it
@@ -323,20 +346,19 @@ three-way cycle on a one-tap glance control means the tap meant to darken the sc
 the OS setting, which on a phone already set to dark looks like the button did nothing. From
 `system` it flips away from whatever the phone is currently showing.
 
-**The lock-screen card rides on the keep-alive track.** There is no web API for a lock-screen
-widget. What there is is the Media Session API, which describes *playing audio* to the OS —
-so the card exists only while the silent track is playing, and `lockScreenControls` therefore
-holds that track for the whole shift rather than only for breaks. That is a real battery cost
-and the reason it is a setting, and the reason it is gated on `keepAliveEnabled` in both the
-UI and `lockScreenEnabled()`. `startKeepAlive(fresh)` takes a flag because of this: the
-lock-screen path re-arms the track on every tick, and clearing `keepAliveInterrupted` there
-would wipe the evidence that the phone killed us before `onBecameVisible` ever read it.
+**There is no Media Session lock-screen card, and adding one back is a decision, not a
+tidy-up.** The app used to describe its silent keep-alive track to the OS so Android drew it
+a music-player card with Break, Lunch, Pause and End day on the transport buttons. It was
+removed deliberately. The cost was structural: the card exists only while audio is playing,
+so it held audio focus for the entire shift rather than only for breaks — a real battery
+drain — and it dragged a settings switch, a five-state status line, generated canvas artwork
+and a second set of action semantics along with it. What survives is the pinned notification,
+which says what its buttons do and shows on the lock screen anyway.
 
-**Nothing reached from the lock screen may call `confirm()`.** The page is behind a locked
+**Nothing reached from a notification may call `confirm()`.** The page may be behind a locked
 screen; a dialog nobody can see blocks the handler and the button does nothing. `actEndDay`
 takes an `unattended` flag for exactly that path, and it is safe because ending a day is
-recoverable through Reopen. The transport buttons also toggle rather than fire once — there
-is one Break button, so it has to end the break it started.
+recoverable through Reopen.
 
 **`pause` on a media element is delivered asynchronously.** The keep-alive watches for the
 phone suspending it by listening for a `pause` it did not ask for. Setting an

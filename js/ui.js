@@ -197,7 +197,7 @@
       'setDailyTarget', 'setBreakAlert', 'setBreakRepeat', 'setLunchAlert', 'setLunchRepeat',
       'setStretchAlert', 'setStretchRepeat', 'setPauseAlert', 'setMeetingAlert',
       'setOvertimeReminder', 'sumTimers',
-      'setKeepAlive', 'setLockScreen', 'lockScreenStatus', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
+      'setKeepAlive', 'setVibrate', 'notifyStatusText', 'enableNotifyBtn', 'testNotifyBtn',
       'permCard', 'permTitle', 'permSteps', 'permSite', 'permSiteUrl', 'copySiteBtn', 'recheckNotifyBtn',
       'keepAliveWarning', 'batterySteps', 'vibrateNote', 'pushStatus',
       'sumReminders', 'sumProfile', 'sumInstall', 'sumAccount', 'sumAppearance',
@@ -1525,30 +1525,7 @@
     return push;
   }
 
-  /**
-   * Say, in words, whether the lock-screen card exists right now.
-   *
-   * Every state here is one somebody will hit and be unable to explain from
-   * looking at their phone: a browser that has no media session at all, a day
-   * that has not started, or a track the autoplay policy refused - which is
-   * indistinguishable from the feature being broken unless we say so.
-   */
-  var LOCK_SCREEN_NOTES = {
-    live: 'Active now - check your lock screen or pull down the shade; it sits with your music players.',
-    idle: 'Appears once you clock in. There is nothing for it to show before the day starts.',
-    off: 'Turned off. The card only exists while the silent track is playing.',
-    'needs-keepalive': 'Needs "Keep reminding with the screen off" above - that is the track the card is drawn for.',
-    blocked: 'Your browser blocked the track this launch. Tap any button in the app and it will start.',
-    unsupported: 'This browser has no media session, so it cannot put anything on the lock screen. iPhones are the usual case.'
-  };
-
-  function renderLockScreenStatus(notify) {
-    if (!el.lockScreenStatus || !notify.lockScreenState) return;
-    el.lockScreenStatus.textContent = LOCK_SCREEN_NOTES[notify.lockScreenState()] || '';
-  }
-
   function renderKeepAliveStatus(notify) {
-    renderLockScreenStatus(notify);
     if (!el.keepAliveWarning) return;
 
     var push = renderPushStatus();
@@ -1585,9 +1562,6 @@
     el.setLunchAlert.value = s.lunchAlertMinutes;
     el.setLunchRepeat.value = s.lunchRepeatMinutes;
     el.setKeepAlive.checked = !!s.keepAliveEnabled;
-    el.setLockScreen.checked = !!s.lockScreenControls;
-    // The card is drawn for the silent track, so it cannot be on without it.
-    el.setLockScreen.disabled = !s.keepAliveEnabled;
     el.setVibrate.checked = !!s.vibrate;
 
     el.setStretchAlert.value = s.stretchAlertMinutes;
@@ -1683,8 +1657,7 @@
 
     if (el.sumReminders) {
       el.sumReminders.textContent = perm === 'granted'
-        ? 'On' + (s.vibrate ? ' · vibrate' : '') + (s.keepAliveEnabled ? ' · screen off' : '') +
-          (s.lockScreenControls && s.keepAliveEnabled ? ' · lock screen' : '')
+        ? 'On' + (s.vibrate ? ' · vibrate' : '') + (s.keepAliveEnabled ? ' · screen off' : '')
         : (perm === 'denied' ? 'Blocked — needs your attention' : 'Off · tap to turn on');
     }
     if (el.sumTimers) {

@@ -682,18 +682,6 @@
                   </span>
                 </label>
 
-                <label class="switch-row">
-                  <input type="checkbox" id="setLockScreen">
-                  <span>
-                    <strong>Lock screen controls</strong>
-                    <small>Puts Track8 on the lock screen like a music player: what is running, how the day stands, and buttons for break, lunch, pause and end day. Needs the setting above, since it is the silent track the phone draws the card for.</small>
-                  </span>
-                </label>
-
-                <!-- The card is drawn by the OS, off screen, from a track
-                     nobody can hear. Without this line there is no way to tell
-                     "not started yet" from "your browser will not have it". -->
-                <p class="setting-block-note" id="lockScreenStatus"></p>
 
                 <!-- Filled by UI.renderKeepAliveStatus(). Only appears once the
                      phone has actually been caught suspending the timer, so it

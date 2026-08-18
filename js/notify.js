@@ -47,9 +47,6 @@
   var keepAliveUrl = null;
   var stoppingOnPurpose = false;
   var keepAliveInterrupted = false;
-  // Set when the browser refuses to start the track. Without a gesture behind
-  // it there is no audio, and without audio there is no lock-screen card.
-  var keepAliveBlocked = false;
 
   // Nag bookkeeping for the currently open break/lunch segment.
   // Keyed by the segment's start timestamp so a new break resets it.
@@ -191,12 +188,9 @@
    * amplitude is a hair off silence - inaudible, but real samples, because some
    * engines discard a track that is digitally pure silence.
    *
-   * Ten seconds, not one. Keeping the page awake never cared how long the loop
-   * was, but Chrome does not hand a short clip the media session - anything
-   * under about five seconds is treated as a UI sound effect, gets no audio
-   * focus, and therefore never draws the lock-screen card. A one-second loop
-   * kept the timers running and produced no card at all, which is the single
-   * most likely reason the lock screen looked broken.
+   * Ten seconds, not one. Chrome treats anything under about five seconds as a
+   * UI sound effect and gives it no audio focus, and audio focus is what buys
+   * the background exemption in the first place.
    */
   function buildSilentTrackUrl() {
     var sampleRate = 8000;
@@ -227,8 +221,8 @@
     // A 40Hz sine rather than an alternating ±1, which was a full-scale-Nyquist
     // tone kept inaudible only by being one bit tall. Browsers decide whether a
     // page is "making a sound" by measuring signal power, and a one-bit signal
-    // can read as silence - which loses both the media session and, on some
-    // builds, the background exemption the whole keep-alive exists for. 40Hz at
+    // can read as silence - which loses the background exemption the whole
+    // keep-alive exists for. 40Hz at
     // this level is below what a phone speaker can reproduce and far below
     // hearing on headphones, but it is unambiguously a signal. A whole number
     // of cycles per loop, so the seam does not click.
@@ -241,13 +235,7 @@
     return URL.createObjectURL(new Blob([buffer], { type: 'audio/wav' }));
   }
 
-  /**
-   * @param fresh  True when a new segment is starting. Only then is the
-   *   "the phone killed us" flag cleared - the lock-screen controls re-arm this
-   *   track on every tick, and clearing the flag there would wipe the evidence
-   *   before onBecameVisible ever got to read it.
-   */
-  function startKeepAlive(fresh) {
+  function startKeepAlive() {
     if (!global.T8Store.settings().keepAliveEnabled) return;
 
     if (!keepAliveEl) {
@@ -255,17 +243,16 @@
       keepAliveEl = new Audio(keepAliveUrl);
       keepAliveEl.loop = true;
       // Not 0, and not near enough to 0 to be mistaken for it: a muted or
-      // effectively-silent element is denied audio focus, and audio focus is
-      // what the lock-screen card is drawn for. 0.05 of a 40Hz tone is still
-      // nothing any phone speaker can reproduce.
+      // effectively-silent element is denied audio focus, and without audio
+      // focus Android stops treating the page as one that may keep running.
+      // 0.05 of a 40Hz tone is still nothing any phone speaker can reproduce.
       keepAliveEl.volume = 0.05;
       keepAliveEl.setAttribute('playsinline', '');
       keepAliveEl.setAttribute('aria-hidden', 'true');
       // In the document, not floating detached. An audio element with no
       // `controls` renders nothing, so this costs no layout - but a player the
-      // browser can see in the page is the case every implementation of media
-      // controls is written for, and a detached one is not worth betting the
-      // lock-screen card on.
+      // browser can see in the page is the case every implementation is written
+      // for, and a detached one is not worth betting the reminder on.
       document.body.appendChild(keepAliveEl);
 
       // If this track stops while a break is still open, we did not stop it —
@@ -286,17 +273,15 @@
       });
     }
 
-    if (fresh) keepAliveInterrupted = false;
+    keepAliveInterrupted = false;
     stoppingOnPurpose = false;
 
     // play() on an already-playing element resolves without doing anything, so
     // this is safe to call every tick.
     if (keepAliveEl.paused) {
       var play = keepAliveEl.play();
-      if (play && play.then) {
-        play.then(function () { keepAliveBlocked = false; });
+      if (play && play.catch) {
         play.catch(function (e) {
-          keepAliveBlocked = true;
           // Autoplay policy blocks this unless a gesture started it. Break and
           // lunch are always begun by a tap, so this should not normally fire.
           console.info('Track8: background keep-alive could not start; falling back to catch-up reminders.', e);
@@ -316,7 +301,6 @@
       keepAliveEl.currentTime = 0;
     } catch (e) { /* already stopped */ }
     keepAliveInterrupted = false;
-    clearMedia();
   }
 
   /** True when the silent track is actually playing, i.e. layer 2 is live. */
@@ -324,273 +308,27 @@
     return !!(keepAliveEl && !keepAliveEl.paused);
   }
 
-  /* ---------------------------------------------------------- lock screen */
-
   /**
-   * The lock-screen card, the way a music app gets one.
+   * Two different lifetimes, deliberately.
    *
-   * There is no web API for "put a widget on the lock screen". What there is
-   * is the Media Session API: a page that is playing audio can describe that
-   * audio to the OS and claim the transport buttons, and Android then draws it
-   * the same card it draws for Spotify - artwork, two lines of text, a
-   * progress bar, and up to five controls. So the card is real, but it rides
-   * on the silent keep-alive track: no track playing, no card. That is also
-   * why this cannot be a settings-only feature - turning the card on means
-   * holding audio focus for the whole shift.
+   * The silent track is held only through a resting segment, because that is
+   * the only stretch layer 2 has to nag through - work and meeting time is
+   * credited whether the page lives or not, so holding audio focus across a
+   * whole shift is battery spent for nothing.
    *
-   * The buttons the OS offers are a fixed vocabulary, so the app's actions are
-   * mapped onto the nearest transport meaning rather than invented:
-   *
-   *   play / pause   clock in, or pause and resume the clock
-   *   previous       start a break, or end the one that is running
-   *   next           start lunch, or end the lunch that is running
-   *   stop           end the day
-   *
-   * Everything the timer screen can do, in other words, except logging a
-   * meeting - which needs a length, and a lock screen has nowhere to ask.
-   */
-  /**
-   * The picture on the card, drawn rather than shipped.
-   *
-   * A lock-screen card is mostly artwork, and the alternative to giving it one
-   * is the app icon stretched to fill a phone screen. It is generated on a
-   * canvas because the no-external-requests rule means there is nowhere to
-   * fetch a photograph from, and shipping five 512px images would be a quarter
-   * of a megabyte in the shell cache for something that is never seen inside
-   * the app.
-   *
-   * Each state gets its own sky, so the card reads at a glance from across a
-   * desk: teal for the clock running, indigo for a meeting, amber for a break,
-   * pink for lunch, overcast grey for a pause. Same colours as the buttons and
-   * the week chart, so nothing new has to be learnt.
-   */
-  var SCENERY = {
-    WORKING: { sky: ['#0b3f45', '#20c7b5'], sun: '#e8fff9', hills: ['#0a2f38', '#062227'] },
-    MEETING: { sky: ['#1e1b4b', '#818cf8'], sun: '#eef2ff', hills: ['#1b1a44', '#111031'] },
-    BREAK: { sky: ['#4a2a08', '#f59e0b'], sun: '#fff4dc', hills: ['#37220b', '#231506'] },
-    LUNCH: { sky: ['#4a1035', '#ec4899'], sun: '#ffe6f2', hills: ['#3a0f2c', '#25091c'] },
-    PAUSED: { sky: ['#1f2933', '#64748b'], sun: '#e2e8f0', hills: ['#1a222b', '#111820'] }
-  };
-
-  var artworkCache = {};
-
-  function buildArtwork(state) {
-    if (artworkCache[state]) return artworkCache[state];
-
-    var look = SCENERY[state];
-    if (!look || typeof document === 'undefined') return null;
-
-    var size = 512;
-    var canvas = document.createElement('canvas');
-    canvas.width = size;
-    canvas.height = size;
-    var ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-
-    var sky = ctx.createLinearGradient(0, 0, 0, size * 0.72);
-    sky.addColorStop(0, look.sky[0]);
-    sky.addColorStop(1, look.sky[1]);
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, size, size);
-
-    // Sun low on the horizon, with its glow bled into the sky above it.
-    var glow = ctx.createRadialGradient(size * 0.5, size * 0.62, 0, size * 0.5, size * 0.62, size * 0.42);
-    glow.addColorStop(0, 'rgba(255,255,255,0.55)');
-    glow.addColorStop(1, 'rgba(255,255,255,0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, size, size);
-
-    ctx.fillStyle = look.sun;
-    ctx.beginPath();
-    ctx.arc(size * 0.5, size * 0.62, size * 0.1, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Two ranges rather than one, because a single silhouette reads as a wedge
-    // and two read as distance.
-    var range = function (baseline, height, colour, offset) {
-      ctx.fillStyle = colour;
-      ctx.beginPath();
-      ctx.moveTo(0, size);
-      ctx.lineTo(0, baseline);
-      for (var x = 0; x <= size; x += 8) {
-        var t = x / size;
-        var y = baseline - height * (
-          0.55 * Math.sin(t * 5.2 + offset) + 0.35 * Math.sin(t * 11.7 + offset * 2) + 0.5
-        );
-        ctx.lineTo(x, y);
-      }
-      ctx.lineTo(size, size);
-      ctx.closePath();
-      ctx.fill();
-    };
-
-    range(size * 0.74, size * 0.1, look.hills[0], 0.6);
-    range(size * 0.86, size * 0.08, look.hills[1], 2.2);
-
-    artworkCache[state] = canvas.toDataURL('image/png');
-    return artworkCache[state];
-  }
-
-  var MEDIA_TITLES = {
-    WORKING: '⏱️ On the clock',
-    MEETING: '👥 In a meeting',
-    BREAK: '☕ On a break',
-    LUNCH: '🍱 At lunch',
-    PAUSED: '⏸️ Paused'
-  };
-
-  var lastMediaKey = '';
-  var mediaWired = false;
-
-  function mediaSupported() {
-    return typeof navigator !== 'undefined' && 'mediaSession' in navigator && !!global.MediaMetadata;
-  }
-
-  function lockScreenEnabled() {
-    var s = global.T8Store.settings();
-    return !!(s.lockScreenControls && s.keepAliveEnabled);
-  }
-
-  /**
-   * Why there is or is not a card right now.
-   *
-   * The card is drawn by the OS, off-screen, from a track nobody can hear, so
-   * when it does not appear there is nothing to look at and no way to tell a
-   * blocked autoplay from an unsupported browser from a day that simply has
-   * not started. Settings says which.
-   */
-  function lockScreenState() {
-    if (!mediaSupported()) return 'unsupported';
-    if (!global.T8Store.settings().lockScreenControls) return 'off';
-    if (!global.T8Store.settings().keepAliveEnabled) return 'needs-keepalive';
-    if (keepAliveBlocked) return 'blocked';
-    if (!keepAliveActive()) return 'idle';
-    return 'live';
-  }
-
-  var MEDIA_ACTIONS = [
-    ['play', 'onPlayRequest'],
-    ['pause', 'onPauseRequest'],
-    ['previoustrack', 'onBreakRequest'],
-    ['nexttrack', 'onLunchRequest'],
-    ['stop', 'onEndDayRequest']
-  ];
-
-  /**
-   * Claimed once, not per update. A handler that is set again on every tick
-   * costs a browser round trip a second for no change, and dropping one to
-   * null mid-session makes Android redraw the card with a missing button.
-   */
-  function wireMediaActions() {
-    if (mediaWired || !mediaSupported()) return;
-    MEDIA_ACTIONS.forEach(function (pair) {
-      try {
-        navigator.mediaSession.setActionHandler(pair[0], function () {
-          var fn = callbacks[pair[1]];
-          if (fn) fn();
-        });
-      } catch (e) { /* an action this browser does not know is not an error */ }
-    });
-    mediaWired = true;
-  }
-
-  function clearMedia() {
-    if (!mediaSupported()) return;
-    lastMediaKey = '';
-    try {
-      navigator.mediaSession.metadata = null;
-      navigator.mediaSession.playbackState = 'none';
-    } catch (e) { /* cosmetic */ }
-  }
-
-  /** Second line of the card: how the day stands, in the same words as the app. */
-  function mediaSubtitle(summary, targetMs) {
-    var counted = shortMs(summary.creditedMs);
-    if (targetMs > 0 && summary.creditedMs < targetMs) {
-      return counted + ' counted · ' + shortMs(targetMs - summary.creditedMs) + ' to go';
-    }
-    if (targetMs > 0) return counted + ' counted · target met';
-    return counted + ' counted';
-  }
-
-  /**
-   * Push the current state to the OS.
-   *
-   * Cheap to call every second: the text only changes on the minute, and
-   * everything below is skipped unless it actually differs.
-   */
-  function updateMedia(summary) {
-    if (!mediaSupported()) return;
-    if (!keepAliveActive()) { clearMedia(); return; }
-
-    var targetMs = global.T8Store.settings().dailyTargetMinutes * 60000;
-    var title = MEDIA_TITLES[summary.state] || 'Track8';
-    var subtitle = mediaSubtitle(summary, targetMs);
-    var key = title + '|' + subtitle;
-
-    if (key !== lastMediaKey) {
-      lastMediaKey = key;
-      var scene = buildArtwork(summary.state);
-      try {
-        navigator.mediaSession.metadata = new global.MediaMetadata({
-          title: title,
-          artist: subtitle,
-          album: 'Track8',
-          artwork: scene
-            ? [{ src: scene, sizes: '512x512', type: 'image/png' }]
-            : [{ src: './icons/icon-512.png', sizes: '512x512', type: 'image/png' }]
-        });
-      } catch (e) { /* metadata is cosmetic */ }
-    }
-
-    try {
-      // Paused reads as "the clock is not running", which is exactly what the
-      // play button then offers to fix.
-      navigator.mediaSession.playbackState =
-        (summary.state === TL.STATES.WORKING || summary.state === TL.STATES.MEETING)
-          ? 'playing' : 'paused';
-    } catch (e) { /* ignore */ }
-
-    // The progress bar is the day against its target. setPositionState throws
-    // if position runs past duration, which an overtime day always does.
-    if (targetMs > 0 && navigator.mediaSession.setPositionState) {
-      try {
-        navigator.mediaSession.setPositionState({
-          duration: targetMs / 1000,
-          position: Math.min(targetMs, summary.creditedMs) / 1000,
-          playbackRate: 1
-        });
-      } catch (e) { /* ignore */ }
-    }
-  }
-
-  /**
-   * Decide whether the silent track should be running at all, and keep the
-   * lock screen in step with it.
-   *
-   * Two reasons to hold it: a resting segment that layer 2 has to nag through,
-   * or the lock-screen card, which needs audio for the whole shift and not
-   * just the breaks. Neither applies to a day that has not started or has
-   * already been ended.
+   * The pinned notification runs for the whole open day, because its buttons
+   * are how a break is STARTED without unlocking the phone. Tying it to the
+   * track instead left the shade empty all morning and the card appearing only
+   * once a break was already running, which is the half of the feature nobody
+   * needs. A notification costs nothing to keep posted.
    */
   function syncBackground(summary, cfg) {
+    if (!(cfg && cfg.resting)) stopKeepAlive();
+
     var open = summary.state !== TL.STATES.ENDED && summary.state !== 'IDLE';
-
-    if (open && lockScreenEnabled()) {
-      wireMediaActions();
-      startKeepAlive(false);
-    } else if (!(cfg && cfg.resting)) {
-      stopKeepAlive();
-    }
-
-    updateMedia(summary);
-
-    // The named buttons ride with the card, on the same setting: both are
-    // "control Track8 without unlocking the phone", and a shade entry that
-    // outlived the card the user turned off would read as a bug.
-    if (open && lockScreenEnabled()) {
+    if (open) {
       postShiftNotification(summary.state, summary.openSince, creditedBefore(summary));
-    } else if (!(cfg && cfg.resting)) {
+    } else {
       clearShiftNotification();
     }
   }
@@ -721,13 +459,11 @@
   var OVERTIME = { kind: 'OVERTIME', label: 'Day complete', icon: '🎯' };
 
   /**
-   * The pinned entry that follows the whole shift.
+   * The pinned entry that follows a break or a lunch.
    *
-   * The media card the OS draws is limited to transport buttons - previous,
-   * play, next, stop - which is why Break and Lunch had to be smuggled onto
-   * "previous" and "next". A notification is the one surface where a button
-   * can say what it does, and it shows on the lock screen too, so this carries
-   * the named ones and the card carries the picture and the progress.
+   * A notification is the one surface where a button can say what it does, and
+   * it shows on the lock screen too, so this is how a break is ended without
+   * unlocking the phone.
    *
    * What it says and which buttons it carries live in js/shift-card.js, because
    * the service worker redraws this same notification when a break is ended from
@@ -818,7 +554,7 @@
    */
   function onBreakStarted(state, since, creditedBeforeMs) {
     nagCursor = { since: since, fired: -1 };
-    startKeepAlive(true);
+    startKeepAlive();
     postShiftNotification(state, since, creditedBeforeMs || 0);
   }
 
@@ -976,8 +712,7 @@
 
     if (!cfg) {
       if (nagCursor.since !== null) onBreakEnded();
-      // Still runs for a state with no reminder of its own: the lock-screen
-      // card belongs to the whole shift, not only to the naggable parts.
+      // Still runs, to put away anything a previous state left standing.
       syncBackground(summary, null);
       return null;
     }
@@ -986,10 +721,9 @@
     // without replaying reminders the user already saw before the reload.
     if (nagCursor.since !== summary.openSince) {
       nagCursor = { since: summary.openSince, fired: -1 };
-      // Only resting time is worth holding the page awake for on its own
-      // account. Working and meeting time is credited whether the page lives
-      // or not - it is the lock screen, below, that asks for it there.
-      if (cfg.resting) startKeepAlive(true);
+      // Only resting time is worth holding the page awake for: working and
+      // meeting time is credited whether the page lives or not.
+      if (cfg.resting) startKeepAlive();
     }
 
     syncBackground(summary, cfg);
@@ -1006,9 +740,12 @@
 
   function init(options) {
     var opts = options || {};
-    callbacks.onResumeRequest = opts.onResumeRequest || null;
-    callbacks.onDrainRequest = opts.onDrainRequest || null;
-    MEDIA_ACTIONS.forEach(function (pair) { callbacks[pair[1]] = opts[pair[1]] || null; });
+    // Every one of these is a button on the pinned notification, or the
+    // worker telling a live page to file a tap it took on its own.
+    ['onResumeRequest', 'onBreakRequest', 'onLunchRequest', 'onPauseRequest',
+      'onEndDayRequest', 'onDrainRequest'].forEach(function (name) {
+      callbacks[name] = opts[name] || null;
+    });
     listenForServiceWorkerMessages();
     return registerServiceWorker();
   }
@@ -1028,7 +765,6 @@
     onBreakEnded: onBreakEnded,
     startKeepAlive: startKeepAlive,
     stopKeepAlive: stopKeepAlive,
-    lockScreenState: lockScreenState,
     keepAliveActive: keepAliveActive,
     keepAliveWasInterrupted: keepAliveWasInterrupted,
     dueIndex: dueIndex,
