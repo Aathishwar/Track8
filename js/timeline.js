@@ -351,9 +351,15 @@
    * load-bearing. What matters is that the log stays monotonic and readable.
    *
    * `opts.leaveOpen` corrects a day that has not finished yet - today, usually.
-   * It ends the log with an open WORKING event instead of an ENDED one, so the
-   * timer picks the day straight back up. Without it, correcting today would
-   * clock the user out as the price of fixing a stray Pause.
+   * It ends the log with an open event instead of an ENDED one, so the timer
+   * picks the day straight back up. Without it, correcting today would clock
+   * the user out as the price of fixing a stray Pause.
+   *
+   * `opts.openState` is what that trailing event is, and it defaults to WORKING
+   * only because most corrections are made at the desk. Hardcoding WORKING is
+   * wrong: someone who is genuinely on their lunch, corrects an unrelated field
+   * and saves would have their lunch closed out from under them and the rest of
+   * it credited as desk work, with the lunch reminder silently disarmed.
    */
   function rebuildFromTotals(dateKey, opts) {
     var day = createDay(dateKey);
@@ -380,10 +386,16 @@
     if (!day.events.length) day.events.push({ t: startMs, s: STATES.WORKING });
 
     if (opts.leaveOpen) {
-      // A second WORKING event would be a same-state repeat, and pushEvent
-      // rejects those for a reason: it would read as a transition that never
-      // happened and split one stretch of desk work into two.
-      if (lastEvent(day).s !== STATES.WORKING) day.events.push({ t: cursor, s: STATES.WORKING });
+      // ENDED would not be "open" at all, so it can never be the trailing state.
+      var openState = opts.openState && opts.openState !== STATES.ENDED
+        ? opts.openState
+        : STATES.WORKING;
+
+      // A same-state repeat is what pushEvent rejects everywhere else: it reads
+      // as a transition that never happened and splits one stretch in two. If
+      // the last block is already that state, leaving it unclosed IS the open
+      // event.
+      if (lastEvent(day).s !== openState) day.events.push({ t: cursor, s: openState });
     } else {
       day.events.push({ t: cursor, s: STATES.ENDED });
     }

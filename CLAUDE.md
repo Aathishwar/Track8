@@ -139,13 +139,35 @@ with an open `WORKING` event instead of `ENDED`. Without this, fixing a stray pa
 demanded a finish time that has not happened and clocked the user out as the price of the
 correction.
 
-Three things that shape has to keep doing. The offer is **today-only** — `fillEditForm` hides
-the row for any other date, because ticked on last Tuesday it meant "running until 23:59 that
-night", which is the 30-hour day `AUTO_END_HOUR` exists to prevent. `saveDayEdit` **re-derives
-desk work from `Date.now()`** rather than reading the field, or the minutes between opening the
-sheet and pressing Save are silently lost. And `rebuildFromTotals` appends that final `WORKING`
-event **only if the last block is not already `WORKING`**, since a same-state repeat is exactly
-what `pushEvent` refuses elsewhere.
+Five things that shape has to keep doing:
+
+**It resumes into the state the day was actually in.** `opts.openState`, chosen by
+`resumeStateFor()` in `app.js` from the pre-edit `TL.currentState(day)`. Hardcoding `WORKING`
+meant someone genuinely at lunch, correcting an unrelated field, had their lunch closed out
+from under them — the rest of it credited as desk work and the lunch reminder disarmed, with
+the shade still offering an "End lunch" button that `pushEvent` would then reject as a
+same-state no-op. The one exception is a bucket the user has just zeroed: setting lunch to 0
+while on lunch means "I was never at lunch", so that resumes at the desk.
+
+**The offer is today-only.** `fillEditForm` hides the row for any other date, because ticked on
+last Tuesday it meant "running until 23:59 that night", which is the 30-hour day
+`AUTO_END_HOUR` exists to prevent.
+
+**`saveDayEdit` re-derives desk work from `Date.now()`** rather than reading the field, or the
+minutes between opening the sheet and pressing Save are silently lost.
+
+**Unticking re-stamps the finish** (`source === 'toggle'` in `syncEditForm`). The field has
+been showing whatever "now" was when the sheet opened — a plausible-looking time that nothing
+draws the eye to — so handing it back a minute later without a fresh stamp binned that minute.
+
+**`rebuildFromTotals` appends the trailing open event only if the last block is not already
+that state**, since a same-state repeat is exactly what `pushEvent` refuses elsewhere.
+
+**The form models a day as one continuous shift, which an after-hours meeting is not.** A day
+that was ended and reopened has an off-the-clock gap the form cannot represent, so saving
+flattens it and credits those hours. `editAfterHours` in `ui.js` detects the shape and says so
+in the hint line rather than letting the number arrive as a surprise. Fixing it properly means
+teaching the form about the gap, not hiding the warning.
 
 **Correcting the active day re-arms everything hanging off it.** `saveDayEdit` calls
 `rearmRestingNotifications()` when the edited key is `activeDayKey`. The day it just replaced

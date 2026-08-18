@@ -1339,6 +1339,15 @@
     el.editWorkH.readOnly = open;
     el.editWorkM.readOnly = open;
 
+    // Handing the field back has to re-stamp it. It has been showing whatever
+    // "now" was when the sheet opened, which is a plausible-looking time that
+    // nothing draws the eye to - unticking a minute later and saving would
+    // quietly bin that minute.
+    if (source === 'toggle' && !open) {
+      el.editEndTime.value = clockFieldValue(Math.min(Date.now(), midnight - 60000));
+      source = 'clock';
+    }
+
     if (open) {
       var nowMs = Math.min(Date.now(), midnight - 60000);
       el.editEndTime.value = clockFieldValue(nowMs);
@@ -1402,9 +1411,18 @@
 
     el.editSpanHint.textContent = shortDuration(Math.max(0, finishMs - startMs)) +
       (editIsOpen() ? ' so far, ' : ' on site, ') +
-      shortDuration(editWorkMs() + editFieldMinutes(el.editMeetingM)) + ' counted.';
+      shortDuration(editWorkMs() + editFieldMinutes(el.editMeetingM)) + ' counted.' +
+      (editAfterHours
+        ? ' This day was ended and reopened later, and saving merges it into one shift.'
+        : '');
     el.editSpanHint.hidden = false;
   }
+
+  /* Set when the day being corrected was ended and then reopened - the evening
+     meeting. The form models a day as one continuous shift, so saving flattens
+     that gap and credits the off-the-clock hours; say so rather than let the
+     number arrive as a surprise. */
+  var editAfterHours = false;
 
   /** Load a day into the manual-correction form. */
   function fillEditForm(dateKey, now) {
@@ -1426,6 +1444,10 @@
     // left to mean something odd: ticked on last Tuesday it read "running until
     // 23:59 that night", which is both untrue and the exact 30-hour day the 10pm
     // auto-close exists to prevent.
+    editAfterHours = !!(day && day.events.some(function (ev, i) {
+      return ev.s === TL.STATES.ENDED && i < day.events.length - 1;
+    }));
+
     var isToday = dateKey === TL.dateKeyOf(now);
     if (el.editStillRunningRow) el.editStillRunningRow.hidden = !isToday;
     if (el.editStillRunning) el.editStillRunning.checked = isToday && !!(day && TL.isRunning(day));

@@ -451,6 +451,21 @@
     editFormProblem = UI.syncEditForm(isWork ? 'work' : 'clock');
   }
 
+  /**
+   * What a corrected open day should still be doing when it is saved.
+   *
+   * Whatever it was doing before the edit, unless the user has just told us
+   * otherwise: zeroing the lunch minutes while on lunch means "I was never at
+   * lunch", so that one resumes at the desk. Every other case keeps the break,
+   * lunch, pause or meeting running, because the person is still on it - they
+   * came here to fix an unrelated number, not to clock back in.
+   */
+  function resumeStateFor(dateKey, buckets) {
+    var existing = Store.getDay(dateKey);
+    var was = existing ? TL.currentState(existing) : 'IDLE';
+    return buckets[was] > 0 ? was : S.WORKING;
+  }
+
   function saveDayEdit(event) {
     event.preventDefault();
     var dateKey = el.editDayForm.dataset.dateKey;
@@ -516,6 +531,9 @@
       lunchMs: lunchMs,
       pausedMs: pausedMs,
       leaveOpen: stillRunning,
+      openState: stillRunning ? resumeStateFor(dateKey, {
+        MEETING: meetingMs, BREAK: breakMs, LUNCH: lunchMs, PAUSED: pausedMs
+      }) : null,
       note: el.editNote.value.trim()
     });
 
@@ -1339,8 +1357,13 @@
       el.editPausedM, el.editWorkH, el.editWorkM].forEach(function (field) {
       bindIfPresent(field, 'input', onEditFieldInput);
     });
-    // The checkbox changes what the finish field means, so it re-derives too.
-    bindIfPresent(el.editStillRunning, 'change', onEditFieldInput);
+    // The checkbox changes what the finish field means, so it re-derives too -
+    // and 'toggle' is its own source because handing the finish field back to
+    // the user has to re-stamp it from the clock, not leave the value it was
+    // showing a minute ago.
+    bindIfPresent(el.editStillRunning, 'change', function () {
+      editFormProblem = UI.syncEditForm('toggle');
+    });
     el.closeEditDayModal.addEventListener('click', function () { UI.closeModal(el.editDayModal); });
     el.cancelEditDay.addEventListener('click', function () { UI.closeModal(el.editDayModal); });
     el.deleteDayBtn.addEventListener('click', deleteDay);
