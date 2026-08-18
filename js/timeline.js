@@ -344,6 +344,16 @@
    * Rebuild a day's events from edited totals, preserving clock-in time.
    * Used by the manual-correction editor: the user thinks in "6h 30m worked",
    * not in transition timestamps.
+   *
+   * The synthesised order - work, meeting, break, lunch, paused - is not what
+   * anybody's day looked like, and it does not have to be: every total in the
+   * app is a sum over segments, so only the durations and the clock-in are
+   * load-bearing. What matters is that the log stays monotonic and readable.
+   *
+   * `opts.leaveOpen` corrects a day that has not finished yet - today, usually.
+   * It ends the log with an open WORKING event instead of an ENDED one, so the
+   * timer picks the day straight back up. Without it, correcting today would
+   * clock the user out as the price of fixing a stray Pause.
    */
   function rebuildFromTotals(dateKey, opts) {
     var day = createDay(dateKey);
@@ -354,7 +364,8 @@
       [STATES.WORKING, Math.max(0, opts.workMs || 0)],
       [STATES.MEETING, Math.max(0, opts.meetingMs || 0)],
       [STATES.BREAK, Math.max(0, opts.breakMs || 0)],
-      [STATES.LUNCH, Math.max(0, opts.lunchMs || 0)]
+      [STATES.LUNCH, Math.max(0, opts.lunchMs || 0)],
+      [STATES.PAUSED, Math.max(0, opts.pausedMs || 0)]
     ];
 
     var cursor = startMs;
@@ -368,7 +379,15 @@
 
     if (!day.events.length) day.events.push({ t: startMs, s: STATES.WORKING });
 
-    day.events.push({ t: cursor, s: STATES.ENDED });
+    if (opts.leaveOpen) {
+      // A second WORKING event would be a same-state repeat, and pushEvent
+      // rejects those for a reason: it would read as a transition that never
+      // happened and split one stretch of desk work into two.
+      if (lastEvent(day).s !== STATES.WORKING) day.events.push({ t: cursor, s: STATES.WORKING });
+    } else {
+      day.events.push({ t: cursor, s: STATES.ENDED });
+    }
+
     day.note = opts.note || '';
     return day;
   }

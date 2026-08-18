@@ -213,8 +213,6 @@
       weekAnchor = new Date(now);
       openShiftDismissed = false;
     }
-
-    return Store.findOpenDay(null, activeDayKey);
   }
 
   /* -------------------------------------------------------------- rendering */
@@ -469,13 +467,30 @@
     var timeParts = (el.editStartTime.value || '09:00').split(':');
     var base = TL.dateFromKey(dateKey);
     base.setHours(Number(timeParts[0]) || 0, Number(timeParts[1]) || 0, 0, 0);
+    var startMs = base.getTime();
 
-    var workMs = (Number(el.editWorkH.value) || 0) * 3600000 + (Number(el.editWorkM.value) || 0) * 60000;
+    var stillRunning = UI.editIsOpen();
     var meetingMs = (Number(el.editMeetingM.value) || 0) * 60000;
     var breakMs = (Number(el.editBreakM.value) || 0) * 60000;
     var lunchMs = (Number(el.editLunchM.value) || 0) * 60000;
+    var pausedMs = (Number(el.editPausedM.value) || 0) * 60000;
+    var restMs = meetingMs + breakMs + lunchMs + pausedMs;
+    var now = Date.now();
 
-    var totalMs = workMs + meetingMs + breakMs + lunchMs;
+    // On an open day desk work is re-derived here rather than read off the
+    // form. The form was filled at some earlier moment and its "now" has moved
+    // on since; taking the stale figure would quietly lose the minutes between
+    // opening the sheet and pressing Save.
+    var workMs = stillRunning
+      ? Math.max(0, now - startMs - restMs)
+      : (Number(el.editWorkH.value) || 0) * 3600000 + (Number(el.editWorkM.value) || 0) * 60000;
+
+    if (stillRunning && startMs > now) {
+      UI.toast('That start time has not happened yet.', 'warn');
+      return;
+    }
+
+    var totalMs = workMs + restMs;
 
     if (totalMs > 24 * 3600000) {
       UI.toast('That is more than 24 hours in one day.', 'warn');
@@ -485,19 +500,22 @@
     // A day may not be made to finish in the future. Saving "8h from 09:00" at
     // 11am used to stamp a clock-out at 17:00; every later tap was then forced
     // past it by the monotonic guard, freezing the timer and collapsing the
-    // rest of the afternoon into one-second segments.
-    var endsAt = base.getTime() + totalMs;
-    if (endsAt > Date.now()) {
+    // rest of the afternoon into one-second segments. An open day cannot fail
+    // this - its finish is now by construction.
+    var endsAt = startMs + totalMs;
+    if (!stillRunning && endsAt > now) {
       UI.toast('That adds up to ' + UI.clockTime(endsAt) + ', which has not happened yet.', 'warn');
       return;
     }
 
     var day = TL.rebuildFromTotals(dateKey, {
-      startMs: base.getTime(),
+      startMs: startMs,
       workMs: workMs,
       meetingMs: meetingMs,
       breakMs: breakMs,
       lunchMs: lunchMs,
+      pausedMs: pausedMs,
+      leaveOpen: stillRunning,
       note: el.editNote.value.trim()
     });
 
@@ -508,7 +526,14 @@
 
     UI.closeModal(el.editDayModal);
     renderAll();
-    UI.toast('Saved ' + UI.hm(workMs + meetingMs) + ' for ' + dateKey + '.', 'ok');
+
+    // The day that was just replaced may have been the one a break, a pinned
+    // notification and a server reminder were all hanging off. Whatever state
+    // it is in now is the truth, so everything that tracks it is re-derived.
+    if (dateKey === activeDayKey) rearmRestingNotifications();
+
+    UI.toast('Saved ' + UI.hm(workMs + meetingMs) + ' for ' + dateKey +
+      (stillRunning ? ' - still on the clock.' : '.'), 'ok');
   }
 
   function deleteDay() {
@@ -1311,9 +1336,11 @@
     el.editDayForm.addEventListener('submit', saveDayEdit);
     // Desk work is derived, so every field that feeds it re-derives it live.
     [el.editStartTime, el.editEndTime, el.editMeetingM, el.editBreakM, el.editLunchM,
-      el.editWorkH, el.editWorkM].forEach(function (field) {
+      el.editPausedM, el.editWorkH, el.editWorkM].forEach(function (field) {
       bindIfPresent(field, 'input', onEditFieldInput);
     });
+    // The checkbox changes what the finish field means, so it re-derives too.
+    bindIfPresent(el.editStillRunning, 'change', onEditFieldInput);
     el.closeEditDayModal.addEventListener('click', function () { UI.closeModal(el.editDayModal); });
     el.cancelEditDay.addEventListener('click', function () { UI.closeModal(el.editDayModal); });
     el.deleteDayBtn.addEventListener('click', deleteDay);

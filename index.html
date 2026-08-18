@@ -562,8 +562,20 @@
           <div class="form-group">
             <div class="input-pair">
               <span class="field-col"><label for="editStartTime">Started at</label><input type="time" id="editStartTime" required></span>
-              <span class="field-col"><label for="editEndTime">Finished at</label><input type="time" id="editEndTime" required></span>
+              <span class="field-col"><label for="editEndTime">Finished at</label><input type="time" id="editEndTime"></span>
             </div>
+            <!-- Not `required`: a day that is still running has no finish yet,
+                 and demanding one turned "fix a stray pause on today" into
+                 "clock yourself out to fix it". The checkbox below says which
+                 case this is; saveDayEdit refuses an empty finish only when it
+                 is unticked. -->
+            <label class="switch-row tight" id="editStillRunningRow" for="editStillRunning">
+              <input type="checkbox" id="editStillRunning">
+              <span>
+                <strong>Still on the clock</strong>
+                <small>The day has not finished. Desk work is counted up to now, and the timer keeps running after you save.</small>
+              </span>
+            </label>
           </div>
 
           <div class="form-group">
@@ -581,11 +593,15 @@
           </div>
 
           <div class="form-group">
-            <label>Breaks and lunch <span class="label-hint">not counted</span></label>
+            <label>Breaks, lunch and pauses <span class="label-hint">none of it counted</span></label>
             <div class="input-pair">
               <span class="input-with-unit"><input type="number" id="editBreakM" min="0" max="1439" step="1" inputmode="numeric"><span>m break</span></span>
               <span class="input-with-unit"><input type="number" id="editLunchM" min="0" max="1439" step="1" inputmode="numeric"><span>m lunch</span></span>
             </div>
+            <!-- Its own row rather than a third column: three number inputs
+                 side by side are unusable at 360px, and a pause is the one of
+                 the three most likely to be zeroed out by mistake-correction. -->
+            <span class="input-with-unit"><input type="number" id="editPausedM" min="0" max="1439" step="1" inputmode="numeric" aria-label="Paused minutes"><span>m paused</span></span>
           </div>
 
           <div class="form-group">
@@ -935,7 +951,10 @@
             </button>
             <div class="settings-group-body" id="groupData">
               <div class="setting-block">
-                <p class="setting-block-note">Everything is stored on this device only. Nothing is uploaded anywhere. Clearing your browser data deletes it, so take a backup now and then.</p>
+                <!-- Written by renderSyncStatus(): what is true here depends on
+                     whether this copy has a sync server and whether anyone is
+                     signed in, so it must not be a fixed sentence. -->
+                <p class="setting-block-note" id="dataScopeNote">Everything is stored on this device only. Nothing is uploaded anywhere. Clearing your browser data deletes it, so take a backup now and then.</p>
                 <div class="inline-actions">
                   <button type="button" class="btn btn-primary btn-small" id="exportExcelBtn">Export to Excel</button>
                   <button type="button" class="btn btn-secondary btn-small" id="exportBtn">Backup file</button>

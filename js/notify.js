@@ -100,6 +100,11 @@
    * settled a break on its own and is telling a page that happens to be alive to
    * write it into the log now rather than on the next launch.
    */
+  /* `lunch`, `pause` and `end` are no longer on any card this version draws.
+     They stay because a phone can still be holding a notification posted by an
+     older service worker - the card outlives the code that made it - and a tap
+     on one of those buttons has to land somewhere rather than be dropped in
+     silence. Delete them only once no such worker can plausibly be installed. */
   var SW_ACTIONS = {
     'resume-work': 'onResumeRequest',
     'break': 'onBreakRequest',

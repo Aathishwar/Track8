@@ -118,13 +118,39 @@ this is invisible on the author's machine; verify timezone logic with
 
 **Desk work in the correction form is derived, not typed.** It is the remainder of a shift:
 `syncEditForm()` in `ui.js` recomputes it whenever the start clock, the finish clock or the
-break/lunch/meeting minutes change, and recomputes the *finish* instead when the desk figure
-itself is typed. Correcting a start time to an hour earlier used to leave desk work untouched
-— the day silently ended an hour early and the user had to do the subtraction by hand. The
-two directions must never both fire for one edit, which is why `saveDayEdit` trusts
+meeting/break/lunch/**paused** minutes change, and recomputes the *finish* instead when the desk
+figure itself is typed. Correcting a start time to an hour earlier used to leave desk work
+untouched — the day silently ended an hour early and the user had to do the subtraction by hand.
+The two directions must never both fire for one edit, which is why `saveDayEdit` trusts
 `editFormProblem` (the last message `syncEditForm` returned) rather than re-deriving at
 submit: re-running it there would resolve a contradiction by overwriting whichever field the
 user typed last.
+
+**Every uncounted bucket is editable, pauses included.** A pause is the one people tap by
+accident, so leaving it out of the form meant the only way to undo one was to delete the day.
+`editPausedM` feeds `editRestMs()` like break and lunch, and `rebuildFromTotals` lays a `PAUSED`
+block after `LUNCH`.
+
+**A day that has not finished is corrected in a different shape.** "Still on the clock"
+(`editStillRunning`) is ticked automatically when the edited day is running, and then: the
+finish clock *is* now, so it is disabled; desk work is read-only, because with both ends fixed
+it is fully determined; and `rebuildFromTotals` is called with `leaveOpen`, which ends the log
+with an open `WORKING` event instead of `ENDED`. Without this, fixing a stray pause on today
+demanded a finish time that has not happened and clocked the user out as the price of the
+correction.
+
+Three things that shape has to keep doing. The offer is **today-only** — `fillEditForm` hides
+the row for any other date, because ticked on last Tuesday it meant "running until 23:59 that
+night", which is the 30-hour day `AUTO_END_HOUR` exists to prevent. `saveDayEdit` **re-derives
+desk work from `Date.now()`** rather than reading the field, or the minutes between opening the
+sheet and pressing Save are silently lost. And `rebuildFromTotals` appends that final `WORKING`
+event **only if the last block is not already `WORKING`**, since a same-state repeat is exactly
+what `pushEvent` refuses elsewhere.
+
+**Correcting the active day re-arms everything hanging off it.** `saveDayEdit` calls
+`rearmRestingNotifications()` when the edited key is `activeDayKey`. The day it just replaced
+may have been mid-break, with a pinned notification, a keep-alive track, a server reminder and a
+handoff snapshot all describing a break that no longer exists.
 
 **No event may be timestamped in the future.** `pushEvent` keeps the log monotonic by
 bumping a new event to `last.t + 1000`, so a single future-dated event poisons everything

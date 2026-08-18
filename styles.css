@@ -2601,6 +2601,20 @@ input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="r
   appearance: none;
 }
 
+/* A field the form is filling in for you. Both states are used by the day
+   editor while "Still on the clock" is ticked - the finish is now, and desk
+   work is what is left of it - and an input that still looks editable invites
+   an edit that is silently recomputed away. */
+/* The :not chain matches the base input rule's specificity on purpose - a
+   shorter selector loses to it and the field goes on looking editable. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):disabled,
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"])[readonly] {
+  color: var(--text-muted);
+  background: var(--bg-surface);
+  border-style: dashed;
+  cursor: not-allowed;
+}
+
 input::placeholder {
   color: var(--text-muted);
   opacity: 1;   /* Firefox dims placeholders further by default */
@@ -2904,21 +2918,6 @@ input:focus {
   margin-bottom: 6px;
 }
 
-.settings-section h4 {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.7px;
-  color: var(--accent-ink);
-  margin-bottom: 10px;
-}
-
-.settings-note {
-  font-size: 12px;
-  line-height: 1.5;
-  color: var(--text-muted);
-  margin-bottom: 10px;
-}
-
 .setting-row {
   display: flex;
   align-items: center;
@@ -2938,6 +2937,18 @@ input:focus {
   padding: 11px 0;
   border-top: 1px solid var(--border-subtle);
   cursor: pointer;
+}
+
+/* Inside a form group the row is already separated by the group's own spacing,
+   so it drops the settings-screen divider. */
+.switch-row.tight {
+  padding: 6px 0 0;
+  border-top: none;
+}
+
+/* `hidden` loses to the display:flex above unless it is said again. */
+.switch-row[hidden] {
+  display: none;
 }
 
 .switch-row input[type="checkbox"] {

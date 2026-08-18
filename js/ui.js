@@ -189,8 +189,8 @@
       'closeAddPersonModal', 'cancelAddPerson',
       'logDetailsModal', 'logModalTitle', 'logDetailsBody', 'closeLogDetailsModal',
       'editDayModal', 'editDayForm', 'editDayTitle', 'closeEditDayModal',
-      'editStartTime', 'editEndTime', 'editSpanHint',
-      'editWorkH', 'editWorkM', 'editMeetingM', 'editBreakM', 'editLunchM',
+      'editStartTime', 'editEndTime', 'editStillRunning', 'editStillRunningRow', 'editSpanHint',
+      'editWorkH', 'editWorkM', 'editMeetingM', 'editBreakM', 'editLunchM', 'editPausedM',
       'editNote', 'deleteDayBtn', 'cancelEditDay',
       'settingsModal', 'closeSettingsModal', 'openSettingsBtn', 'settingsBody',
       'settingsTitle', 'showAllSettingsBtn',
@@ -201,6 +201,7 @@
       'permCard', 'permTitle', 'permSteps', 'permSite', 'permSiteUrl', 'copySiteBtn', 'recheckNotifyBtn',
       'keepAliveWarning', 'batterySteps', 'vibrateNote', 'pushStatus',
       'sumReminders', 'sumProfile', 'sumInstall', 'sumAccount', 'sumAppearance',
+      'sumData', 'dataScopeNote',
       'signinScreen', 'signinEmailForm', 'signinCodeForm', 'signinEmail', 'signinCode', 'signinName',
       'signinSendBtn', 'signinVerifyBtn', 'signinResendBtn', 'signinBackBtn',
       'signinSentTo', 'signinError',
@@ -1280,7 +1281,13 @@
   function editRestMs() {
     return editFieldMinutes(el.editMeetingM) +
       editFieldMinutes(el.editBreakM) +
-      editFieldMinutes(el.editLunchM);
+      editFieldMinutes(el.editLunchM) +
+      editFieldMinutes(el.editPausedM);
+  }
+
+  /** True while the form is describing a day that has not finished yet. */
+  function editIsOpen() {
+    return !!(el.editStillRunning && el.editStillRunning.checked);
   }
 
   function setEditWork(workMs) {
@@ -1298,25 +1305,53 @@
    *
    * Desk work is the remainder of a shift, not arithmetic the user should be
    * doing on paper: correcting the start time to an hour earlier means an hour
-   * more at the desk, and it now says so. Typing a desk figure directly moves
-   * the finish time instead, so the two directions never fight over the same
-   * value.
+   * more at the desk, and it now says so. Every uncounted minute - break, lunch
+   * and pause alike - comes off it, which is the whole point of being able to
+   * zero a pause that was tapped by accident.
+   *
+   * Two shapes, because a day that has not finished is a different problem:
+   *
+   *   Closed day    start and finish are both the user's. Typing a desk figure
+   *                 moves the finish instead, so the two directions never fight
+   *                 over the same value.
+   *   Still running the finish IS now - there is nothing to type and nothing to
+   *                 move - so desk work is read-only and follows the start and
+   *                 the uncounted minutes.
    *
    * `source` is the field that changed - 'work' for the desk figure, anything
-   * else for the clocks and the break minutes.
+   * else for the clocks and the minute fields.
    */
   function syncEditForm(source) {
     var dateKey = el.editDayForm.dataset.dateKey;
-    if (!dateKey) return;
+    if (!dateKey) return '';
 
     var startMs = clockFieldMs(el.editStartTime, dateKey);
-    if (startMs == null) return;
+    if (startMs == null) return '';
 
     var restMs = editRestMs();
     var midnight = TL.nextMidnightOf(dateKey);
+    var open = editIsOpen();
     var problem = '';
 
-    if (source === 'work') {
+    // The finish is not the user's to set on an open day, and a field that
+    // still looked editable would invite an edit that is silently overwritten.
+    el.editEndTime.disabled = open;
+    el.editWorkH.readOnly = open;
+    el.editWorkM.readOnly = open;
+
+    if (open) {
+      var nowMs = Math.min(Date.now(), midnight - 60000);
+      el.editEndTime.value = clockFieldValue(nowMs);
+
+      var openWorkMs = nowMs - startMs - restMs;
+      if (openWorkMs < 0) {
+        problem = nowMs <= startMs
+          ? 'That start time has not happened yet.'
+          : 'The uncounted minutes add up to more than the time since you started.';
+        openWorkMs = 0;
+      }
+      setEditWork(openWorkMs);
+    } else if (source === 'work') {
       var endMs = startMs + editWorkMs() + restMs;
       // A shift the user has just made longer than the day it belongs to. The
       // clock is pinned to 23:59 rather than wrapping to the small hours,
@@ -1328,13 +1363,16 @@
       el.editEndTime.value = clockFieldValue(endMs);
     } else {
       var finishMs = clockFieldMs(el.editEndTime, dateKey);
-      if (finishMs == null) return;
+      if (finishMs == null) {
+        renderEditSpan('Set the time you finished, or tick "Still on the clock".');
+        return 'Set the time you finished, or tick "Still on the clock".';
+      }
 
       var workMs = finishMs - startMs - restMs;
       if (workMs < 0) {
         problem = finishMs <= startMs
           ? 'The finish time is before the start time.'
-          : 'Breaks and meetings add up to more than the shift itself.';
+          : 'The meetings, breaks and pauses add up to more than the shift itself.';
         workMs = 0;
       }
       setEditWork(workMs);
@@ -1363,7 +1401,8 @@
     }
 
     el.editSpanHint.textContent = shortDuration(Math.max(0, finishMs - startMs)) +
-      ' on site, ' + shortDuration(editWorkMs() + editFieldMinutes(el.editMeetingM)) + ' counted.';
+      (editIsOpen() ? ' so far, ' : ' on site, ') +
+      shortDuration(editWorkMs() + editFieldMinutes(el.editMeetingM)) + ' counted.';
     el.editSpanHint.hidden = false;
   }
 
@@ -1380,12 +1419,24 @@
     var summary = day ? TL.summarize(day, clampToDay(day, now)) : null;
     var startMs = (summary && summary.firstIn) || (date.getTime() + 9 * 3600000);
 
+    // A day still on the clock opens in its own shape, so correcting today does
+    // not demand a finish time that has not happened.
+    //
+    // Only today can be still running, and the offer is withdrawn rather than
+    // left to mean something odd: ticked on last Tuesday it read "running until
+    // 23:59 that night", which is both untrue and the exact 30-hour day the 10pm
+    // auto-close exists to prevent.
+    var isToday = dateKey === TL.dateKeyOf(now);
+    if (el.editStillRunningRow) el.editStillRunningRow.hidden = !isToday;
+    if (el.editStillRunning) el.editStillRunning.checked = isToday && !!(day && TL.isRunning(day));
+
     el.editStartTime.value = clockFieldValue(startMs);
     el.editWorkH.value = summary ? Math.floor(summary.workMs / 3600000) : 8;
     el.editWorkM.value = summary ? Math.floor((summary.workMs % 3600000) / 60000) : 0;
     el.editMeetingM.value = summary ? Math.round(summary.meetingMs / 60000) : 0;
     el.editBreakM.value = summary ? Math.round(summary.breakMs / 60000) : 0;
     el.editLunchM.value = summary ? Math.round(summary.lunchMs / 60000) : 0;
+    el.editPausedM.value = summary ? Math.round(summary.pausedMs / 60000) : 0;
     el.editNote.value = (day && day.note) || '';
     el.deleteDayBtn.hidden = !day;
 
@@ -1699,6 +1750,19 @@
       el.sumAccount.textContent = !s.available ? 'Not available on this server'
         : s.signedIn ? s.email
           : 'Not signed in';
+    }
+
+    // "Nothing is uploaded anywhere" was a fixed sentence written before this
+    // app had accounts, and it stayed on screen while the same screen offered
+    // to sync. Where the hours actually live is the one thing this group has to
+    // be right about, so both lines are written from the account state.
+    if (el.sumData) {
+      el.sumData.textContent = s.signedIn ? 'Synced to your account' : 'On this device only';
+    }
+    if (el.dataScopeNote) {
+      el.dataScopeNote.textContent = s.signedIn
+        ? 'Your days sync to ' + s.email + ', so a new phone can pick them up by signing in. This device stays the working copy and never waits on the network. The backup file is still the only thing that can be restored into a device with no account.'
+        : 'Everything is stored on this device only. Nothing is uploaded anywhere. Clearing your browser data deletes it, so take a backup now and then.';
     }
 
     if (el.syncStatusText) {
@@ -2108,6 +2172,7 @@
     renderDateHeader: renderDateHeader,
     fillEditForm: fillEditForm,
     syncEditForm: syncEditForm,
+    editIsOpen: editIsOpen,
     fillSettingsForm: fillSettingsForm,
     renderNotifyCard: renderNotifyCard,
     renderKeepAliveStatus: renderKeepAliveStatus,
