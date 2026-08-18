@@ -35,6 +35,7 @@
   }
 
   function statusOf(record) {
+    if (record.day.autoEnded) return 'Auto-closed at 10pm - check in app';
     if (record.clamped) return 'Never ended - fix in app';
     if (record.day.imported) return 'Imported';
     if (!record.summary.ended) return 'Still open';
@@ -44,10 +45,10 @@
   /**
    * Every day of every profile, oldest first, with its summary attached.
    *
-   * A still-running day is measured up to `now`, but never past its own
-   * midnight. Without that clamp, a shift someone forgot to end last Tuesday
-   * would export as hundreds of hours - and would disagree with the app, which
-   * already clamps the same way in its unfinished-shift prompt.
+   * A still-running day is measured up to `now`, but never past the point it
+   * stops accruing - 10pm on its own date. Without that clamp, a shift someone
+   * forgot to end last Tuesday would export as hundreds of hours, and would
+   * disagree with the app, which clamps the same way on every screen.
    */
   function collect(now) {
     var state = Store.get();
@@ -59,15 +60,15 @@
         var day = days[key];
         if (!day || !day.events || !day.events.length) return;
 
-        var midnight = TL.nextMidnightOf(day.dateKey);
-        var measuredAt = Math.min(now, midnight);
+        var cutoff = TL.autoEndOf(day.dateKey, day);
+        var measuredAt = Math.min(now, cutoff);
 
         rows.push({
           person: person,
           day: day,
           date: TL.dateFromKey(day.dateKey),
           measuredAt: measuredAt,
-          clamped: TL.isRunning(day) && now > midnight,
+          clamped: TL.isRunning(day) && now > cutoff,
           summary: TL.summarize(day, measuredAt)
         });
       });

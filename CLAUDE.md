@@ -116,6 +116,16 @@ forever. Use `TL.nextMidnightOf(key)`, which does calendar arithmetic. India has
 this is invisible on the author's machine; verify timezone logic with
 `$env:TZ='America/New_York'; node …` against `js/timeline.js` directly.
 
+**Desk work in the correction form is derived, not typed.** It is the remainder of a shift:
+`syncEditForm()` in `ui.js` recomputes it whenever the start clock, the finish clock or the
+break/lunch/meeting minutes change, and recomputes the *finish* instead when the desk figure
+itself is typed. Correcting a start time to an hour earlier used to leave desk work untouched
+— the day silently ended an hour early and the user had to do the subtraction by hand. The
+two directions must never both fire for one edit, which is why `saveDayEdit` trusts
+`editFormProblem` (the last message `syncEditForm` returned) rather than re-deriving at
+submit: re-running it there would resolve a contradiction by overwriting whichever field the
+user typed last.
+
 **No event may be timestamped in the future.** `pushEvent` keeps the log monotonic by
 bumping a new event to `last.t + 1000`, so a single future-dated event poisons everything
 after it: the timer freezes and each later tap collapses into a one-second segment. The
@@ -136,12 +146,36 @@ function, that is a battery bug on a phone in a pocket.
 throws `Illegal constructor` on Android Chrome — the target device. The constructor in
 `notify.js` is a desktop fallback only.
 
-**A stale open day is clamped to its own midnight.** A shift someone forgot to end last
-Tuesday must not report the hours since. Three places apply this clamp and must agree, or
-the screen, the correction form and the spreadsheet will each show a different number:
-`renderOpenShiftBanner()` and `fillEditForm()` in `ui.js` (both via `clampToDay()`), and
-`collect()` in `report.js`. The edit form especially — an unclamped prefill of "74" hours
-fails the field's `max="24"` and leaves Save silently doing nothing.
+**A day stops accruing at 10 pm.** `TL.AUTO_END_HOUR`. A shift someone forgot to end last
+Tuesday must not report the hours since — unclamped it reads 30h, 42h, and every week bar,
+calendar total and balance built on it is fiction. Two mechanisms enforce it and they have
+to agree:
+
+`TL.autoClose(day, now)` writes a real `ENDED` event **stamped at the cutoff, not at `now`**,
+so the total is the same whether the app finds out at 22:01 or the following Friday.
+`autoEndForgottenDays()` in `app.js` runs it from `reconcile()` — at most once a minute, and
+always on a suspend — walking backwards through every open day, because a phone left alone
+over a long weekend has more than one. It runs *before* the midnight split, so an abandoned
+shift is closed at 10 pm rather than carried into a new day.
+
+`TL.measuredAt(day, now)` is the read side, for a day that has not been closed yet — another
+profile's, or one drawn before the scan ran. **Every reader goes through it**: `renderTimer`,
+`renderWeek`, `renderCalendar`, `renderDayDetails`, `renderOpenShiftBanner` and
+`fillEditForm` in `ui.js` (all via `clampToDay()`), and `collect()` in `report.js`. Miss one
+and that screen alone shows 30h. The edit form especially — an unclamped prefill of "74"
+hours fails the field's `max="24"` and leaves Save silently doing nothing.
+
+A day whose own last event is at or after 10 pm keeps its midnight instead, and
+`splitAtMidnight` owns it as before: someone still tapping at 22:30 is working late, not
+forgetting, and an `ENDED` marker stamped before the last event would only be bumped past it
+by `pushEvent` and collapse that stretch into a second.
+
+**An auto-close is a guess, so it keeps asking.** 10 pm is not when anybody actually went
+home. The day is flagged `autoEnded`, `Store.findUnsettledDay()` keeps it in the recovery
+banner across launches, and the banner's second button becomes "Looks right" — accepting the
+guess through `Store.settleDay()`, which is also what Reopen and a correction do. Dismissing
+a day that is still *running* is only "later"; its flag is not set and it returns next
+launch.
 
 **The timer digits are `aria-hidden`.** They change every second; a live region around them
 made screen readers read the clock aloud continuously for the entire shift. The announcement

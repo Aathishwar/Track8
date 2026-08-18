@@ -151,14 +151,16 @@
   }
 
   /**
-   * Never measure a day past its own midnight.
+   * Never measure a day past the point it stops accruing.
    *
-   * A shift someone forgot to end last Tuesday must report Tuesday's hours, not
-   * every hour since. Used by the recovery banner and the correction form; the
-   * Excel export applies the same rule in report.js.
+   * A shift someone forgot to end last Tuesday must report Tuesday's hours up
+   * to the 10 pm auto-close, not every hour since. Every reader of a stored day
+   * goes through this - the timer, the week bars, the calendar, the day sheet,
+   * the recovery banner and the correction form - and the Excel export applies
+   * the same rule in report.js. Miss one and that screen alone shows 30h.
    */
-  function clampToDay(dateKey, now) {
-    return Math.min(now, TL.nextMidnightOf(dateKey));
+  function clampToDay(day, now) {
+    return TL.measuredAt(day, now);
   }
 
   /* ---------------------------------------------------------- DOM caching */
@@ -187,7 +189,8 @@
       'closeAddPersonModal', 'cancelAddPerson',
       'logDetailsModal', 'logModalTitle', 'logDetailsBody', 'closeLogDetailsModal',
       'editDayModal', 'editDayForm', 'editDayTitle', 'closeEditDayModal',
-      'editStartTime', 'editWorkH', 'editWorkM', 'editMeetingM', 'editBreakM', 'editLunchM',
+      'editStartTime', 'editEndTime', 'editSpanHint',
+      'editWorkH', 'editWorkM', 'editMeetingM', 'editBreakM', 'editLunchM',
       'editNote', 'deleteDayBtn', 'cancelEditDay',
       'settingsModal', 'closeSettingsModal', 'openSettingsBtn', 'settingsBody',
       'settingsTitle', 'showAllSettingsBtn',
@@ -638,7 +641,7 @@
    * more; no storage writes, no list rebuilds.
    */
   function renderTimer(day, now) {
-    var summary = TL.summarize(day, now);
+    var summary = TL.summarize(day, clampToDay(day, now));
     var target = targetMs();
     var state = summary.state;
 
@@ -819,11 +822,17 @@
     el.openShiftBanner.hidden = !openDay;
     if (!openDay) return;
 
-    var summary = TL.summarize(openDay, clampToDay(openDay.dateKey, Date.now()));
+    var summary = TL.summarize(openDay, clampToDay(openDay, Date.now()));
+    var when = TL.dateFromKey(openDay.dateKey)
+      .toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' });
 
-    el.openShiftText.textContent = 'You never ended ' + TL.dateFromKey(openDay.dateKey)
-      .toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' }) +
-      '. It shows ' + hm(summary.creditedMs) + ' so far - set the real hours so your totals stay honest.';
+    el.openShiftText.textContent = openDay.autoEnded
+      ? when + ' was never ended, so it was closed at 10pm and counts ' + hm(summary.creditedMs) +
+        '. Set the real hours, or tap Looks right to keep it.'
+      : 'You never ended ' + when + '. It shows ' + hm(summary.creditedMs) +
+        ' so far - set the real hours so your totals stay honest.';
+
+    el.openShiftDismissBtn.textContent = openDay.autoEnded ? 'Looks right' : 'Later';
     el.openShiftBanner.dataset.dateKey = openDay.dateKey;
   }
 
@@ -934,7 +943,7 @@
       var key = TL.dateKeyOf(d);
       var day = days[key];
       var summary = day
-        ? TL.summarize(day, now)
+        ? TL.summarize(day, clampToDay(day, now))
         : { workMs: 0, meetingMs: 0, breakMs: 0, lunchMs: 0, creditedMs: 0 };
 
       return {
@@ -1095,7 +1104,7 @@
       var date = new Date(year, month, dayNum);
       var key = TL.dateKeyOf(date);
       var day = days[key];
-      var creditedMs = day ? TL.summarize(day, now).creditedMs : 0;
+      var creditedMs = day ? TL.summarize(day, clampToDay(day, now)).creditedMs : 0;
       var isWeekend = date.getDay() === 0 || date.getDay() === 6;
       var isFuture = date.getTime() > now && key !== todayKey;
 
@@ -1211,7 +1220,7 @@
       return;
     }
 
-    var summary = TL.summarize(day, now);
+    var summary = TL.summarize(day, clampToDay(day, now));
     var target = targetMs();
     var balance = summary.creditedMs - target;
 
@@ -1227,7 +1236,7 @@
       ['Paused', shortDuration(summary.pausedMs), '']
     ];
 
-    var timeline = TL.segmentsOf(day, now).map(function (seg) {
+    var timeline = TL.segmentsOf(day, clampToDay(day, now)).map(function (seg) {
       return '<li class="timeline-row seg-' + seg.state.toLowerCase() + '">' +
         '<span class="timeline-time">' + clockTime(seg.from) + ' - ' + clockTime(seg.to) + '</span>' +
         '<span class="timeline-state">' + STATE_LABEL[seg.state] + '</span>' +
@@ -1249,6 +1258,115 @@
       '<button type="button" class="btn btn-secondary full" data-edit-day="' + escapeHtml(dateKey) + '">Correct this day</button>';
   }
 
+  function clockFieldValue(ms) {
+    var d = new Date(ms);
+    return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+  }
+
+  /** An HH:MM field read against the day being corrected, or null if empty. */
+  function clockFieldMs(input, dateKey) {
+    var parts = String(input.value || '').split(':');
+    if (parts.length < 2) return null;
+    var d = TL.dateFromKey(dateKey);
+    d.setHours(Number(parts[0]) || 0, Number(parts[1]) || 0, 0, 0);
+    return d.getTime();
+  }
+
+  function editFieldMinutes(input) {
+    return Math.max(0, Number(input.value) || 0) * 60000;
+  }
+
+  /** Everything in the correction form that is not desk work. */
+  function editRestMs() {
+    return editFieldMinutes(el.editMeetingM) +
+      editFieldMinutes(el.editBreakM) +
+      editFieldMinutes(el.editLunchM);
+  }
+
+  function setEditWork(workMs) {
+    el.editWorkH.value = Math.floor(workMs / 3600000);
+    el.editWorkM.value = Math.round((workMs % 3600000) / 60000);
+  }
+
+  function editWorkMs() {
+    return (Math.max(0, Number(el.editWorkH.value) || 0) * 3600000) +
+      (Math.max(0, Number(el.editWorkM.value) || 0) * 60000);
+  }
+
+  /**
+   * Keep the correction form's own numbers agreeing.
+   *
+   * Desk work is the remainder of a shift, not arithmetic the user should be
+   * doing on paper: correcting the start time to an hour earlier means an hour
+   * more at the desk, and it now says so. Typing a desk figure directly moves
+   * the finish time instead, so the two directions never fight over the same
+   * value.
+   *
+   * `source` is the field that changed - 'work' for the desk figure, anything
+   * else for the clocks and the break minutes.
+   */
+  function syncEditForm(source) {
+    var dateKey = el.editDayForm.dataset.dateKey;
+    if (!dateKey) return;
+
+    var startMs = clockFieldMs(el.editStartTime, dateKey);
+    if (startMs == null) return;
+
+    var restMs = editRestMs();
+    var midnight = TL.nextMidnightOf(dateKey);
+    var problem = '';
+
+    if (source === 'work') {
+      var endMs = startMs + editWorkMs() + restMs;
+      // A shift the user has just made longer than the day it belongs to. The
+      // clock is pinned to 23:59 rather than wrapping to the small hours,
+      // where it would read as finishing before it started.
+      if (endMs >= midnight) {
+        endMs = midnight - 60000;
+        problem = 'That runs past midnight, so the finish was pinned to 23:59.';
+      }
+      el.editEndTime.value = clockFieldValue(endMs);
+    } else {
+      var finishMs = clockFieldMs(el.editEndTime, dateKey);
+      if (finishMs == null) return;
+
+      var workMs = finishMs - startMs - restMs;
+      if (workMs < 0) {
+        problem = finishMs <= startMs
+          ? 'The finish time is before the start time.'
+          : 'Breaks and meetings add up to more than the shift itself.';
+        workMs = 0;
+      }
+      setEditWork(workMs);
+    }
+
+    renderEditSpan(problem);
+    return problem;
+  }
+
+  /** The one-line readout under desk work: what the form currently describes. */
+  function renderEditSpan(problem) {
+    if (!el.editSpanHint) return;
+
+    if (problem) {
+      el.editSpanHint.textContent = problem;
+      el.editSpanHint.hidden = false;
+      return;
+    }
+
+    var dateKey = el.editDayForm.dataset.dateKey;
+    var startMs = clockFieldMs(el.editStartTime, dateKey);
+    var finishMs = clockFieldMs(el.editEndTime, dateKey);
+    if (startMs == null || finishMs == null) {
+      el.editSpanHint.hidden = true;
+      return;
+    }
+
+    el.editSpanHint.textContent = shortDuration(Math.max(0, finishMs - startMs)) +
+      ' on site, ' + shortDuration(editWorkMs() + editFieldMinutes(el.editMeetingM)) + ' counted.';
+    el.editSpanHint.hidden = false;
+  }
+
   /** Load a day into the manual-correction form. */
   function fillEditForm(dateKey, now) {
     var day = Store.getDay(dateKey);
@@ -1259,11 +1377,10 @@
     // Clamped like the banner: an unclamped stale day prefilled "74" hours,
     // which fails the field's max="24" and left Save doing nothing - dead-ending
     // the exact flow the recovery banner exists to make easy.
-    var summary = day ? TL.summarize(day, clampToDay(dateKey, now)) : null;
+    var summary = day ? TL.summarize(day, clampToDay(day, now)) : null;
     var startMs = (summary && summary.firstIn) || (date.getTime() + 9 * 3600000);
-    var start = new Date(startMs);
 
-    el.editStartTime.value = String(start.getHours()).padStart(2, '0') + ':' + String(start.getMinutes()).padStart(2, '0');
+    el.editStartTime.value = clockFieldValue(startMs);
     el.editWorkH.value = summary ? Math.floor(summary.workMs / 3600000) : 8;
     el.editWorkM.value = summary ? Math.floor((summary.workMs % 3600000) / 60000) : 0;
     el.editMeetingM.value = summary ? Math.round(summary.meetingMs / 60000) : 0;
@@ -1271,6 +1388,11 @@
     el.editLunchM.value = summary ? Math.round(summary.lunchMs / 60000) : 0;
     el.editNote.value = (day && day.note) || '';
     el.deleteDayBtn.hidden = !day;
+
+    // Derived from the fields as they now read, not from the raw summary: the
+    // minute values above are rounded, and a finish time carrying the leftover
+    // seconds would disagree with the very numbers beside it.
+    return syncEditForm('work');
   }
 
   /* ------------------------------------------------------------- settings */
@@ -2012,6 +2134,7 @@
     renderDayDetails: renderDayDetails,
     renderDateHeader: renderDateHeader,
     fillEditForm: fillEditForm,
+    syncEditForm: syncEditForm,
     fillSettingsForm: fillSettingsForm,
     renderNotifyCard: renderNotifyCard,
     renderKeepAliveStatus: renderKeepAliveStatus,

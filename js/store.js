@@ -359,6 +359,38 @@
    * running - without it, today would always mask the stale day and the user
    * would never be asked to fix it.
    */
+  /**
+   * The most recent day the user still owes an answer about: one left running,
+   * or one the 10 pm cutoff closed on their behalf.
+   *
+   * Auto-closed days belong here because closing one is a guess. It caps the
+   * damage a forgotten shift does to the totals, but 10 pm is not when anybody
+   * actually went home, so the recovery prompt has to keep asking until the
+   * hours are corrected or the guess is accepted.
+   */
+  function findUnsettledDay(personId, beforeKey) {
+    var days = daysOf(personId);
+    var keys = Object.keys(days).sort();
+    for (var i = keys.length - 1; i >= 0; i--) {
+      if (beforeKey && keys[i] > beforeKey) continue;
+      var day = days[keys[i]];
+      if (!day) continue;
+      if (keys[i] === beforeKey && !day.autoEnded) continue; // today running is not a problem
+      if (TL.isRunning(day) || day.autoEnded) return day;
+    }
+    return null;
+  }
+
+  /** Accept an auto-close as the real hours, so it stops being asked about. */
+  function settleDay(dateKey, personId) {
+    var day = getDay(dateKey, personId);
+    if (!day || !day.autoEnded) return false;
+    delete day.autoEnded;
+    touchDay(day);
+    save();
+    return true;
+  }
+
   function findOpenDay(personId, beforeKey) {
     var days = daysOf(personId);
     var keys = Object.keys(days).sort();
@@ -431,6 +463,8 @@
     putDay: putDay,
     deleteDay: deleteDay,
     findOpenDay: findOpenDay,
+    findUnsettledDay: findUnsettledDay,
+    settleDay: settleDay,
     seen: seen,
     markSeen: markSeen,
     exportJSON: exportJSON,

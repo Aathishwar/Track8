@@ -42,6 +42,11 @@
 
   var DAY_MS = 24 * 60 * 60 * 1000;
 
+  // The hour a day stops accruing on its own. A shift still open at 10 pm was
+  // almost certainly forgotten, and a forgotten shift left alone reports every
+  // hour since - 30h, 42h - into the week bars, the calendar and the export.
+  var AUTO_END_HOUR = 22;
+
   /** Local-calendar date key (YYYY-MM-DD) for a Date or epoch ms. */
   function dateKeyOf(when) {
     var d = (when instanceof Date) ? when : new Date(when);
@@ -72,6 +77,59 @@
   function nextMidnightOf(dateKey) {
     var d = dateFromKey(dateKey);
     return new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+  }
+
+  /**
+   * The instant a day stops accruing: 10 pm local.
+   *
+   * A day whose own last event is at or after the cutoff keeps its midnight
+   * instead. Someone genuinely still transitioning at 10 pm is working late,
+   * not forgetting - and closing a day before its last event is not a
+   * correction anyway, since pushEvent would only bump the ENDED marker back
+   * past it and collapse that stretch into a second.
+   */
+  function autoEndOf(dateKey, day) {
+    var d = dateFromKey(dateKey);
+    var cutoff = new Date(d.getFullYear(), d.getMonth(), d.getDate(), AUTO_END_HOUR).getTime();
+    var last = lastEvent(day);
+    if (last && last.t >= cutoff) return nextMidnightOf(dateKey);
+    return cutoff;
+  }
+
+  /**
+   * The instant to measure a day up to: now, but never past the point it stops
+   * accruing. Every screen, the correction form and the export must agree on
+   * this, or a forgotten shift shows a different number in each of them.
+   */
+  function measuredAt(day, now) {
+    var end = (now == null) ? Date.now() : now;
+    if (!day || !day.dateKey) return end;
+    return Math.min(end, autoEndOf(day.dateKey, day));
+  }
+
+  /**
+   * Close a day that is still running past its cutoff. Returns true when the
+   * day changed, so the caller knows to stamp and persist it.
+   *
+   * The ENDED event is stamped at the cutoff, not at `now`: the total then
+   * reads as it would have had the user tapped End day at 10 pm, whether the
+   * app finds out a minute later or a week later. Nothing is lost either way -
+   * Reopen puts the day back, and the correction form can still set the real
+   * hours.
+   */
+  function autoClose(day, now) {
+    if (!isRunning(day)) return false;
+
+    var cutoff = autoEndOf(day.dateKey, day);
+    // A late shift's cutoff is its own midnight, and midnight belongs to
+    // splitAtMidnight - it carries the running state into the new day rather
+    // than ending it.
+    if (cutoff >= nextMidnightOf(day.dateKey)) return false;
+    if (((now == null) ? Date.now() : now) < cutoff) return false;
+    if (!pushEvent(day, STATES.ENDED, cutoff)) return false;
+
+    day.autoEnded = true;
+    return true;
   }
 
   function createDay(dateKey) {
@@ -319,9 +377,13 @@
     STATES: STATES,
     BUCKET_OF: BUCKET_OF,
     DAY_MS: DAY_MS,
+    AUTO_END_HOUR: AUTO_END_HOUR,
     dateKeyOf: dateKeyOf,
     dateFromKey: dateFromKey,
     nextMidnightOf: nextMidnightOf,
+    autoEndOf: autoEndOf,
+    measuredAt: measuredAt,
+    autoClose: autoClose,
     createDay: createDay,
     lastEvent: lastEvent,
     currentState: currentState,

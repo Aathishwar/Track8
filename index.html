@@ -560,16 +560,19 @@
           <p class="form-hint">Forgot to clock in or out? Put the real numbers in and they replace whatever was recorded.</p>
 
           <div class="form-group">
-            <label for="editStartTime">Started at</label>
-            <input type="time" id="editStartTime" required>
+            <div class="input-pair">
+              <span class="field-col"><label for="editStartTime">Started at</label><input type="time" id="editStartTime" required></span>
+              <span class="field-col"><label for="editEndTime">Finished at</label><input type="time" id="editEndTime" required></span>
+            </div>
           </div>
 
           <div class="form-group">
-            <label>Desk work</label>
+            <label>Desk work <span class="label-hint">works itself out from the times</span></label>
             <div class="input-pair">
               <span class="input-with-unit"><input type="number" id="editWorkH" min="0" max="24" step="1" inputmode="numeric"><span>h</span></span>
               <span class="input-with-unit"><input type="number" id="editWorkM" min="0" max="59" step="1" inputmode="numeric"><span>m</span></span>
             </div>
+            <p class="form-hint tight" id="editSpanHint"></p>
           </div>
 
           <div class="form-group">

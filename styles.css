@@ -2629,6 +2629,19 @@ input:focus {
   gap: 8px;
 }
 
+.field-col {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+
+/* Sits directly under the field it explains rather than above the next one. */
+.form-hint.tight {
+  margin: 2px 0 0;
+}
+
 .input-with-unit {
   display: inline-flex;
   align-items: center;

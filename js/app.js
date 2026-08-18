@@ -116,6 +116,63 @@
 
   /* ------------------------------------------------------ day reconciliation */
 
+  // Scanning every stored day is cheap but not free, and nothing about a 10 pm
+  // cutoff needs second-by-second attention.
+  var AUTO_END_SCAN_MS = 60 * 1000;
+  var lastAutoEndScan = 0;
+
+  /**
+   * Close any day still running past its own 10 pm cutoff.
+   *
+   * A forgotten shift used to keep accruing for as long as it went unnoticed,
+   * so the week bar and the export read 30h, 42h, and the balance was fiction.
+   * The ENDED event is stamped at 10 pm rather than at `now`, so the total is
+   * the same whether the app finds out at 22:01 or the following Friday, and
+   * Reopen (or the correction form) still puts the real hours back.
+   *
+   * Days are walked backwards from the active one, because a phone left alone
+   * over a long weekend can have more than one of them open.
+   */
+  function autoEndForgottenDays(now, force) {
+    if (!force && now - lastAutoEndScan < AUTO_END_SCAN_MS) return false;
+    lastAutoEndScan = now;
+
+    var closed = [];
+    var day = Store.getDay(activeDayKey);
+    if (day && TL.autoClose(day, now)) {
+      Store.touchDay(day);
+      closed.push(day.dateKey);
+    }
+
+    var key = activeDayKey;
+    var stale;
+    // findOpenDay only looks *before* the key it is given, so each pass moves
+    // strictly backwards and the walk terminates whether or not it closed one.
+    while ((stale = Store.findOpenDay(null, key))) {
+      key = stale.dateKey;
+      if (!TL.autoClose(stale, now)) continue;
+      Store.touchDay(stale);
+      closed.push(stale.dateKey);
+    }
+
+    if (!closed.length) return false;
+
+    Store.save();
+    Sync.schedule('auto-end');
+
+    // A break or lunch may have been running when the cutoff hit. The pinned
+    // notification and the server reminder both have to go with the day.
+    // Guarded because the first scan runs from init, before Notify has its
+    // service-worker registration - and init re-arms on its own once it does.
+    try { rearmRestingNotifications(); } catch (e) { /* boot order, not an error */ }
+
+    UI.toast(closed.length > 1
+      ? closed.length + ' unfinished days were closed at 10pm. Correct any of them from the calendar.'
+      : 'You never ended ' + closed[0] + ', so it was closed at 10pm. Reopen it or correct the hours.', 'warn');
+
+    return true;
+  }
+
   /**
    * Keep `activeDayKey` pointing at the real current date, and decide what to
    * do about a shift that is still open from an earlier day.
@@ -131,6 +188,10 @@
    *    day is left alone and a banner asks the user to correct it.
    */
   function reconcile(now, wasSuspended) {
+    // Before anything else: a day that ran past its cutoff is closed there, so
+    // the midnight split below never carries an abandoned shift into a new day.
+    autoEndForgottenDays(now, wasSuspended);
+
     var key = today(now);
 
     if (key !== activeDayKey) {
@@ -177,7 +238,7 @@
       el.openShiftBanner.hidden = true;
       return;
     }
-    UI.renderOpenShiftBanner(Store.findOpenDay(null, activeDayKey));
+    UI.renderOpenShiftBanner(Store.findUnsettledDay(null, activeDayKey));
   }
 
   /* ------------------------------------------------------------- tick loop */
@@ -357,6 +418,8 @@
    */
   function actReopen() {
     if (currentState() !== S.ENDED) return;
+    // Reopening answers the auto-close question by hand.
+    Store.settleDay(activeDayKey);
     transition(S.WORKING);
     UI.toast('Back on the clock.', 'info');
   }
@@ -370,14 +433,37 @@
 
   function openDayEditor(dateKey) {
     UI.closeModal(el.logDetailsModal);
-    UI.fillEditForm(dateKey, Date.now());
+    editFormProblem = UI.fillEditForm(dateKey, Date.now());
     UI.openModal(el.editDayModal);
+  }
+
+  /**
+   * Whatever the correction form is currently complaining about, or ''.
+   *
+   * Kept here rather than re-derived at save time because the form is
+   * two-directional: desk work and the finish time each recompute the other,
+   * and re-running that at submit would resolve a contradiction by quietly
+   * overwriting whichever the user typed last.
+   */
+  var editFormProblem = '';
+
+  function onEditFieldInput(event) {
+    var isWork = event.target === el.editWorkH || event.target === el.editWorkM;
+    editFormProblem = UI.syncEditForm(isWork ? 'work' : 'clock');
   }
 
   function saveDayEdit(event) {
     event.preventDefault();
     var dateKey = el.editDayForm.dataset.dateKey;
     if (!dateKey) return;
+
+    // The form's own numbers have to agree before any of them are believed: a
+    // finish time before the start leaves desk work pinned at zero, and saving
+    // that would record a day of nothing but breaks.
+    if (editFormProblem) {
+      UI.toast(editFormProblem, 'warn');
+      return;
+    }
 
     var timeParts = (el.editStartTime.value || '09:00').split(':');
     var base = TL.dateFromKey(dateKey);
@@ -1226,6 +1312,11 @@
     });
     el.closeLogDetailsModal.addEventListener('click', function () { UI.closeModal(el.logDetailsModal); });
     el.editDayForm.addEventListener('submit', saveDayEdit);
+    // Desk work is derived, so every field that feeds it re-derives it live.
+    [el.editStartTime, el.editEndTime, el.editMeetingM, el.editBreakM, el.editLunchM,
+      el.editWorkH, el.editWorkM].forEach(function (field) {
+      bindIfPresent(field, 'input', onEditFieldInput);
+    });
     el.closeEditDayModal.addEventListener('click', function () { UI.closeModal(el.editDayModal); });
     el.cancelEditDay.addEventListener('click', function () { UI.closeModal(el.editDayModal); });
     el.deleteDayBtn.addEventListener('click', deleteDay);
@@ -1236,6 +1327,11 @@
       if (key) openDayEditor(key);
     });
     el.openShiftDismissBtn.addEventListener('click', function () {
+      // On an auto-closed day this is "those hours are right", not "remind me
+      // later": the guess becomes the record and stops being asked about. A day
+      // that is still running keeps its flag and returns on the next launch.
+      var key = el.openShiftBanner.dataset.dateKey;
+      if (key && Store.settleDay(key)) Sync.schedule('settle-day');
       openShiftDismissed = true;
       el.openShiftBanner.hidden = true;
     });
