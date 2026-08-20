@@ -188,6 +188,20 @@ this costs card height — the whole stack is absolutely positioned inside the r
 **Never `new Date('2026-08-13')`.** That parses as UTC and shifts the day for anyone west of
 Greenwich. Use `TL.dateFromKey()`, which builds a local-midnight `Date`.
 
+**Clock times are pinned to `en-US` 12-hour, not the device locale.** `clockTime()` in
+`ui.js` and `timeText()` in `shift-card.js`, which cannot share code because one of them also
+runs in the worker. Passing `[]` meant the same shift read `05:40 PM` on one phone and `17:40`
+on another purely from its region setting, and two people comparing screens concluded the app
+disagreed with itself. `[]` plus `hour12: true` is not the fix either: on a Tamil or Hindi
+handset that renders the marker in that script beside otherwise English labels. `'2-digit'`
+rather than `'numeric'` because these sit in tabular mono columns, where a one-digit hour
+shifts the whole row sideways at ten o'clock.
+
+**`clockFieldValue()` is the exception and must stay 24-hour.** The `value` of an
+`<input type="time">` is `HH:MM` by specification whatever the field displays to the user, so
+routing it through `clockTime()` hands the element a string it rejects and the field silently
+blanks — taking the correction form's start and finish clocks with it.
+
 **Never `dateFromKey(key) + DAY_MS` either.** A local day is 23 or 25 hours long on a
 daylight-saving changeover, so adding a fixed 24h lands an hour off — and on a fall-back day
 it resolves to 23:00 of the *same* date. That made `splitAtMidnight` hand back a "next" day

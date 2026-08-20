@@ -135,9 +135,20 @@
     return Math.floor(minutes / 60) + 'h ' + String(minutes % 60).padStart(2, '0') + 'm';
   }
 
+  /* Pinned to en-US 12-hour rather than the device locale.
+
+     The same shift read "05:40 PM" on one phone and "17:40" on another purely
+     because of their region settings, which makes two people comparing screens
+     think the app disagrees with itself. Every other word in this UI is
+     English, so a locale-native 12-hour marker would not help either - on a
+     Tamil or Hindi handset `[]` with hour12 renders the marker in that script
+     beside English labels. One format everywhere is the only readable answer.
+
+     '2-digit' and not 'numeric': these sit in a tabular mono column, and a
+     one-digit hour makes the whole row shift sideways at 10 o'clock. */
   function clockTime(ms) {
     if (!ms) return '--:--';
-    return new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return new Date(ms).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true });
   }
 
   /** Signed balance against a target, e.g. "+1h 15m" or "-45m". */
@@ -1423,6 +1434,10 @@
       '<button type="button" class="btn btn-secondary full" data-edit-day="' + escapeHtml(dateKey) + '">Correct this day</button>';
   }
 
+  /* Not a display format, and deliberately not clockTime(). The value of an
+     <input type="time"> is 24-hour HH:MM by specification whatever the field
+     shows the user, so an AM/PM string here is simply rejected and the field
+     silently blanks. */
   function clockFieldValue(ms) {
     var d = new Date(ms);
     return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
