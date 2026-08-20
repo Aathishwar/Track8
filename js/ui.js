@@ -151,6 +151,51 @@
   }
 
   /**
+   * What the clock row's middle slot reads, label included.
+   *
+   * The same figure means three different things over a day and the label has
+   * to keep up. "Left 1h 20m" under a day that has already been closed reads
+   * as work still to come, when what it actually is is the amount that day
+   * finished short - and once the target is passed there is nothing left at
+   * all, so the slot switches to the overtime rather than sitting on "Done"
+   * while the number it is hiding keeps growing.
+   */
+  function renderLeftSlot(proj, summary, target, state) {
+    if (!el.clockLeftText) return;
+    var overMs = summary.creditedMs - target;
+    var label, value;
+
+    if (proj.remainingMs > 0) {
+      label = (state === TL.STATES.ENDED) ? 'Short' : 'Left';
+      value = hm(proj.remainingMs);
+    } else {
+      label = 'Over';
+      value = shortDuration(overMs);
+    }
+
+    // Guarded separately: an index.html from before this row had a label of
+    // its own still gets the figure.
+    if (el.clockLeftLabel) el.clockLeftLabel.textContent = label;
+    el.clockLeftText.textContent = value;
+  }
+
+  /**
+   * What the clock row's "Out" slot reads.
+   *
+   * The projection while the day is open, the real clock-out once it has
+   * ended. When the target can no longer be reached the honest answer is the
+   * 10 pm cut-off, because that is when the day actually stops - the dial
+   * chip beside it carries how far short that leaves you.
+   */
+  function projectedOut(proj, summary, day) {
+    if (proj.tooLate && day && day.dateKey) {
+      return '~' + clockTime(TL.autoEndOf(day.dateKey, day));
+    }
+    if (proj.finishAt) return '~' + clockTime(proj.finishAt);
+    return clockTime(summary.lastOut);
+  }
+
+  /**
    * Never measure a day past the point it stops accruing.
    *
    * A shift someone forgot to end last Tuesday must report Tuesday's hours up
@@ -178,7 +223,7 @@
       'btnStart', 'btnResume', 'btnBreak', 'btnLunch', 'btnPause', 'btnEnd',
       'btnMeeting', 'btnLogMeeting', 'btnEndMeeting', 'btnEndMeetingText',
       'btnReopen', 'btnEditToday',
-      'clockInText', 'clockOutText',
+      'clockInText', 'clockLeftLabel', 'clockLeftText', 'clockOutText',
       'openShiftBanner', 'openShiftText', 'openShiftEndBtn', 'openShiftDismissBtn',
       'weeklyAverageText', 'histogramBars', 'weekDonut', 'weekRangeText', 'weekHeading',
       'weekTotalText', 'weekTargetText', 'weekBalanceText',
@@ -550,7 +595,7 @@
     return next;
   }
 
-  function renderDialCenter(summary) {
+  function renderDialCenter(summary, proj) {
     var state = summary.state;
     var inSegment = SEGMENT_STATES[state] === true;
 
@@ -615,6 +660,24 @@
       chip = hm(summary.creditedMs) + ' today';
     } else if (state === 'PAUSED') {
       chip = 'not counting';
+    } else if (proj && proj.tooLate) {
+      // The target cannot be reached before the day stops accruing at 10 pm,
+      // so a finish time would be fiction. How far short you will end is both
+      // shorter to print and the only part of it you can do anything about -
+      // and it grows a minute for every minute spent away from the desk.
+      chip = shortDuration(proj.shortfallMs) + ' short';
+      over = true;
+    } else if (proj && proj.finishAt) {
+      // The one thing the digits, the ring and the percentage all leave out:
+      // the time of day this ends. Tilde because it is a projection.
+      chip = 'out ~' + clockTime(proj.finishAt);
+    } else if (state === TL.STATES.ENDED) {
+      // A closed day: the digits above are its total, so the chip carries how
+      // that landed against the target. Deliberately not amber - the day is
+      // over and there is nothing left to act on.
+      var closedBy = summary.creditedMs - target;
+      if (closedBy >= 60000) chip = shortDuration(closedBy) + ' over';
+      else if (remainingMs > 0) chip = shortDuration(remainingMs) + ' short';
     }
 
     if (el.dialChip) {
@@ -646,14 +709,28 @@
     var target = targetMs();
     var state = summary.state;
 
-    renderDialCenter(summary);
+    // Projected from the real clock, not the clamped one: the totals stop at
+    // the 10 pm cut-off, but "when do I finish?" is asked from the actual now.
+    var proj = TL.projectFinish(summary, (now == null) ? Date.now() : now, {
+      targetMs: target,
+      lunchAllowanceMs: Store.settings().lunchAlertMinutes * 60000,
+      cutoff: (day && day.dateKey) ? TL.autoEndOf(day.dateKey, day) : 0
+    });
+
+    renderDialCenter(summary, proj);
 
     el.meetingDurationText.textContent = shortDuration(summary.meetingMs);
     el.breakDurationText.textContent = shortDuration(summary.breakMs);
     el.lunchDurationText.textContent = shortDuration(summary.lunchMs);
     el.pausedDurationText.textContent = shortDuration(summary.pausedMs);
     el.clockInText.textContent = clockTime(summary.firstIn);
-    el.clockOutText.textContent = clockTime(summary.lastOut);
+    // Guarded like the dial chip: a rolling deploy can serve an index.html
+    // that predates this row for a few seconds, and the clock must not stop.
+    renderLeftSlot(proj, summary, target, state);
+    // The projection while the day is open, the real clock-out once it has
+    // ended. `finishAt` is null in every case where a projected time would be
+    // fiction - idle, ended, target already met - so the fallback covers them.
+    el.clockOutText.textContent = projectedOut(proj, summary, day);
 
     var ratio = target > 0 ? summary.creditedMs / target : 0;
     var percent = Math.round(ratio * 100);

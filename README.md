@@ -34,6 +34,7 @@ Sign in with your email and a 6-digit code — no password, no sign-up form. You
 | | |
 |---|---|
 | 🎯 **One target** | A circular ring against your daily goal, live percentage, and a flip-clock readout of counted time. |
+| 🏁 **When you can go home** | A live finish time and the hours you have left — measured from what actually happened, not from your start time plus eight. |
 | 👥 **Meetings count, breaks don't** | Meetings are tracked separately so you can see how much of the week went to calls rather than to your own work. |
 | 🔔 **Reminders that survive a locked phone** | Four layers, from a server push down to a catch-up the moment you reopen the app. |
 | 📌 **A pinned notification** | Start a break from the shade without unlocking the phone. The worker handles the tap even with the app closed. |
@@ -127,6 +128,30 @@ Time is stored as a list of moments, not as a running count:
 Totals are derived by **subtracting timestamps** whenever you look. Nothing has to be awake and counting — so your hours survive the phone locking, the tab closing, the browser throttling background timers, and the laptop being suspended for a week. Counter-based versions silently lost every minute the page was not running.
 
 It is also what makes a notification tap safe to file hours late, and what makes any day correctable after the fact.
+
+### 🏁 When will I hit 8 hours?
+
+The timer answers it two ways, both live:
+
+* **`out ~18:12`** inside the ring — the clock time you finish
+* **`Left 2h 48m`** in the row underneath, between your clock-in and that finish
+
+Neither is `start time + 8h`. Break, lunch and paused minutes are never credited, so **every minute you spend away pushes the finish later on its own** — a day that began at 09:00 with an hour of rest in it finishes at 18:00, not 17:00. Sit down again and the number stops moving.
+
+The one thing it predicts is the **lunch you have not taken yet**, which is added on and then spent as you take it. That is what keeps the figure still: *17:30 before lunch, 17:30 during it, 17:30 after* — rather than lurching half an hour later exactly as you stand up.
+
+It never shows a time it cannot stand behind. Before you start, once the goal is met, and after you clock out there is no projection at all. If 8 hours is no longer reachable before the 10 pm cut-off, you get the part you can act on instead — **`29m short`**, which holds steady while you work and grows a minute for every minute you spend away.
+
+The middle figure changes its label rather than its meaning:
+
+| | Reads |
+|---|---|
+| Day running, under target | `Left 2h 48m` |
+| Target passed, still working | `Over 42m` |
+| Day ended, under target | `Short 1h 20m` |
+| Day ended, over target | `Over 42m` |
+
+Once you clock out, **`Out`** stops being a projection and becomes the time you actually finished.
 
 ### 🌙 Forgot to end the day?
 

@@ -1358,10 +1358,19 @@ body.modal-open {
   to   { transform: rotateX(-180deg); }
 }
 
+/* Badge above, chip below, both centred on the dial's axis.
+   Side by side, the pair grew with whatever the chip had to say and spilled
+   out of the circle - "29m short" beside "0%" pushed the percentage off centre
+   and the whole row read as one sentence rather than two separate facts. A
+   column keeps the badge fixed where the eye expects it and gives the chip the
+   full width of the dial. Costs no card height: the whole stack is absolutely
+   positioned inside the ring. */
 .target-progress-text {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 3px;
+  max-width: 100%;
   font-size: 12px;
   color: var(--text-secondary);
 }
@@ -1384,6 +1393,13 @@ body.modal-open {
    the reminder countdown, the overrun, or the day total while the digits are
    busy with a meeting. Muted, because the digits above are the headline. */
 .dial-chip {
+  /* Measured off the ring, not off the parent: the parent is a shrink-to-fit
+     flex item, so a percentage there would resolve against its own content.
+     The cap is what stops any future wording from breaking out of the circle
+     the way "won't reach 8h today" did - it truncates instead. */
+  max-width: calc(var(--ring-size) * 0.68);
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-size: 10.5px;
   color: var(--text-muted);
   white-space: nowrap;

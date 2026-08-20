@@ -284,6 +284,59 @@
   }
 
   /**
+   * When today's target will be met, given what has actually happened.
+   *
+   * Deliberately NOT `firstIn + target`. Break, lunch and paused time are
+   * never credited, so a day that started at 09:00 with an hour of rest in it
+   * finishes at 18:00, not 17:00. Projecting from `now` plus the credit still
+   * owed gets that for free: every minute spent resting pushes the answer one
+   * minute later, and every minute at the desk leaves it where it is. Nothing
+   * accumulates - the figure is re-derived from the log on each read like
+   * every other number here.
+   *
+   * `restToComeMs` is the lunch this day has not taken yet, capped at the work
+   * that is left. Without it the finish time jumps half an hour later the
+   * moment someone goes to lunch, which is the one time of day they are
+   * looking at it. With it, the minutes of that lunch spend padding that was
+   * already on screen and the figure holds still. Only lunch is predicted:
+   * it happens once and its length is configured, whereas the number of short
+   * breaks left in a day is a guess.
+   *
+   * `tooLate` means the projection lands past `opts.cutoff` (the 10 pm
+   * auto-close), i.e. the target will not be reached today at this rate, and
+   * `shortfallMs` is by how much. That figure is the useful one to show:
+   * "won't reach 8h today" says nothing you can act on and reads the same all
+   * afternoon, whereas the shortfall holds steady while you are at the desk
+   * and grows a minute for every minute you spend away from it.
+   *
+   * Takes a summary rather than a day: this runs on the tick path and there is
+   * no reason to walk the event log twice a second.
+   *
+   * opts: { targetMs, lunchAllowanceMs, cutoff }
+   */
+  function projectFinish(summary, now, opts) {
+    opts = opts || {};
+    var end = (now == null) ? Date.now() : now;
+    var out = { remainingMs: 0, restToComeMs: 0, finishAt: null, tooLate: false, shortfallMs: 0 };
+    if (!summary) return out;
+
+    out.remainingMs = Math.max(0, (opts.targetMs || 0) - summary.creditedMs);
+    // Nothing to project: the target is already met, the day has not started,
+    // or it is closed. A clock time in any of those cases would be fiction.
+    if (out.remainingMs === 0) return out;
+    if (summary.state === 'IDLE' || summary.state === STATES.ENDED) return out;
+
+    var owedLunch = Math.max(0, (opts.lunchAllowanceMs || 0) - summary.lunchMs);
+    out.restToComeMs = Math.min(owedLunch, out.remainingMs);
+    out.finishAt = end + out.remainingMs + out.restToComeMs;
+    if (opts.cutoff && out.finishAt > opts.cutoff) {
+      out.tooLate = true;
+      out.shortfallMs = out.finishAt - opts.cutoff;
+    }
+    return out;
+  }
+
+  /**
    * Split a day whose timeline ran past midnight.
    *
    * Returns { closed, carried } where `closed` is the original day truncated at
@@ -425,6 +478,7 @@
     segmentsOf: segmentsOf,
     summarize: summarize,
     creditedMsOf: creditedMsOf,
+    projectFinish: projectFinish,
     splitAtMidnight: splitAtMidnight,
     rebuildFromTotals: rebuildFromTotals
   };

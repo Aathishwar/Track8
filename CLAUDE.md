@@ -105,6 +105,61 @@ off-the-clock gap must credit zero time while the meeting after it still accrues
 calendar dots, the week bars and every balance use it. `workMs` alone is desk work only.
 Breaks, lunch and paused time are never credited.
 
+**The finish time is projected from `now`, never from the start clock.**
+`TL.projectFinish(summary, now, opts)`. `firstIn + 8h` is wrong the moment anybody takes a
+break: rest is never credited, so a day that started at 09:00 with an hour of it in the log
+finishes at 18:00, not 17:00. Projecting `now + (target - creditedMs)` gets that for free —
+every minute spent resting pushes the answer a minute later, every minute at the desk leaves
+it where it is, and nothing has to be awake and counting for it to stay true.
+
+`restToComeMs` is the one prediction in it: the lunch this day has not taken yet, capped at
+the work that is left. Without it the finish time jumps half an hour later exactly when
+someone is looking at it — as they walk to lunch — and back again when they return. With it,
+the minutes of that lunch spend padding that was already on screen and the figure holds
+still: 17:30 before lunch, 17:30 during it, 17:30 after. Verified at each step. Only lunch is
+padded, because it happens once and its length is configured (`lunchAlertMinutes`); how many
+short breaks are left in a day is a guess, so none are added.
+
+`finishAt` is `null` — not a clock time — whenever a projection would be fiction: the day has
+not started, it is closed, or the target is already met. Callers fall back rather than
+formatting a number. `tooLate` means the projection lands past the 10 pm cut-off, i.e. the
+target will not be reached today, and `shortfallMs` is by how much.
+
+**Show the shortfall, not the verdict.** The chip used to read "won't reach 8h today". It said
+nothing anyone could act on, it read identically all afternoon, and at twenty characters it
+grew the badge row wider than the ring and pushed the percentage off the dial's axis. It now
+reads `29m short`, which is the same fact in a third of the width and moves: steady while you
+are at the desk, up a minute for every minute spent away from it — the same rule the finish
+time follows, because it is the same subtraction. In that state the row's "Out" slot shows the
+cut-off (`~10:00 PM`), which is when the day really does stop.
+
+It takes a *summary*, not a day, because it runs on the tick path and there is no reason to
+walk the event log twice a second. It is also the one number measured from the **real** clock
+while its totals come from the clamped one — `renderTimer` passes `now`, not
+`clampToDay(day, now)`. The totals stop at 10 pm; the question "when do I finish?" is still
+asked from the actual time.
+
+The answer lands in two places, and it needs both. `#dialChip` carries `out ~18:12` while at
+the desk — always visible, no media query removes it — and the `.clock-row` "Out" slot carries
+the same time with a tilde until the day ends, when it becomes the real clock-out. That row is
+hidden below 620px tall, and during break and lunch below 720px, which is why the chip and not
+the row is the primary home.
+
+**The middle slot's label changes with the state; the figure alone is ambiguous.**
+`renderLeftSlot()` in `ui.js`. `Left 2h 48m` while the day runs, `Short 1h 20m` once it is
+closed — the same number, but under a finished day it is what that day missed, not work still
+to come — and `Over 42m` the moment the target is passed, because there is nothing left to
+count down and a fixed "Done" would sit there hiding a figure that keeps growing. A closed day
+puts the same balance in the chip (`42m over` / `1h 20m short`), deliberately in the muted
+colour rather than the amber `over` class: the day is finished and there is nothing to act on.
+
+**The badge and the chip stack, they do not sit side by side.** `.target-progress-text` is a
+column. In a row the pair grew with whatever the chip had to say and spilled out of the circle,
+and `.dial-chip` now carries `max-width: calc(var(--ring-size) * 0.68)` with an ellipsis so no
+future wording can do it again. The cap is measured off the ring, not the parent: the parent is
+a shrink-to-fit flex item, so a percentage there would resolve against its own content. None of
+this costs card height — the whole stack is absolutely positioned inside the ring.
+
 **Never `new Date('2026-08-13')`.** That parses as UTC and shifts the day for anyone west of
 Greenwich. Use `TL.dateFromKey()`, which builds a local-midnight `Date`.
 

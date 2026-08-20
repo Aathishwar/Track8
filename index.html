@@ -307,8 +307,13 @@
             <button type="button" class="btn btn-secondary" id="btnEditToday" hidden>Correct hours</button>
           </div>
 
+          <!-- "Out" is the projected finish while the day is still running and
+               the real clock-out once it has ended, so the row reads the same
+               way at both ends of the day. The tilde is what marks it as a
+               projection; see TL.projectFinish for why it is not start + 8h. -->
           <div class="clock-row">
             <span>In <strong id="clockInText">--:--</strong></span>
+            <span><span id="clockLeftLabel">Left</span> <strong id="clockLeftText">--</strong></span>
             <span>Out <strong id="clockOutText">--:--</strong></span>
           </div>
 
