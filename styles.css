@@ -1523,6 +1523,21 @@ body.modal-open {
   color: var(--text-secondary);
 }
 
+/* A suggestion, not a status, so it takes the accent ink rather than the muted
+   grey the line below it uses. [hidden] is restated because a later rule that
+   gives this element a display would otherwise beat the UA default and leave
+   the hint on screen with nothing to say. */
+.leave-hint {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--accent-ink);
+  text-align: center;
+  padding-top: 2px;
+}
+.leave-hint[hidden] {
+  display: none;
+}
+
 .reminder-status {
   font-size: 11.5px;
   line-height: 1.45;
@@ -3460,7 +3475,9 @@ input:focus {
    are what gives way. */
 @media (max-height: 720px) {
   [data-state="BREAK"] .clock-row,
-  [data-state="LUNCH"] .clock-row {
+  [data-state="LUNCH"] .clock-row,
+  [data-state="BREAK"] .leave-hint,
+  [data-state="LUNCH"] .leave-hint {
     display: none;
   }
 }
@@ -3480,7 +3497,8 @@ input:focus {
     display: none;
   }
 
-  .clock-row {
+  .clock-row,
+  .leave-hint {
     display: none;
   }
 

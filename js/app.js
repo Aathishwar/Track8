@@ -539,6 +539,10 @@
 
     Store.putDay(day);
 
+    // The banked-overtime hint on the timer is memoised off the days of this
+    // week, and this is the one thing that changes a past one.
+    UI.invalidateBanked();
+
     // Correcting a stale open day is how the recovery banner gets resolved.
     if (dateKey !== activeDayKey) openShiftDismissed = false;
 

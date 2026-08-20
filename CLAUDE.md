@@ -153,6 +153,31 @@ count down and a fixed "Done" would sit there hiding a figure that keeps growing
 puts the same balance in the chip (`42m over` / `1h 20m short`), deliberately in the muted
 colour rather than the amber `over` class: the day is finished and there is nothing to act on.
 
+**Banked overtime is the timer's other question, and it is not the same one.** The finish
+time answers "when do I reach 8 hours today". `renderLeaveHint()` answers the one people
+actually have on a Thursday — when they can go home given what they have already put in.
+`bankedBeforeToday()` measures the surplus exactly as the week view does: everything credited
+on this week's earlier days, less one target for each weekday among them, so a weekend shift
+is pure surplus and a weekday with nothing on it costs a full day. Today is excluded; it is
+the day being spent. Spending the surplus just moves the projected finish earlier by however
+much of it there is, **capped at `now`** — banked time can bring an evening forward, it cannot
+rewrite an afternoon that has already happened.
+
+It is shown only while there is work still left, and only above `BANKED_FLOOR_MS` (15
+minutes): a line that appears for four minutes of surplus is noise, and once the target is met
+the balance is the week view's story rather than the timer's.
+
+**That figure is memoised, because seven days summarized every second is not what the tick
+path is for.** `bankedCache` keys on today's date, the profile and the target, with a
+60-second TTL, and `UI.invalidateBanked()` clears it outright from `saveDayEdit` — correcting
+a past day is the one thing that moves the number, and a correction has to land immediately
+rather than up to a minute later.
+
+**The hint hides with the clock row, not on its own.** It is listed in both existing height
+queries — with `.clock-row` below 620px, and during break and lunch below 720px. That keeps
+the tightest viewport the timer is verified at exactly as tall as it was, so the
+fits-without-scrolling rule does not need re-deriving for a line that only sometimes appears.
+
 **The badge and the chip stack, they do not sit side by side.** `.target-progress-text` is a
 column. In a row the pair grew with whatever the chip had to say and spilled out of the circle,
 and `.dial-chip` now carries `max-width: calc(var(--ring-size) * 0.68)` with an ellipsis so no

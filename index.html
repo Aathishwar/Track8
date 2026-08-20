@@ -317,6 +317,11 @@
             <span>Out <strong id="clockOutText">--:--</strong></span>
           </div>
 
+          <!-- Only ever appears when there is a surplus worth spending. Hidden
+               by the same two height queries as the clock row above it, so the
+               tightest viewport the timer is verified at is unchanged. -->
+          <p class="leave-hint" id="leaveHint" hidden></p>
+
           <p class="reminder-status" id="reminderStatus"></p>
         </div>
       </section>

@@ -153,6 +153,16 @@ The middle figure changes its label rather than its meaning:
 
 Once you clock out, **`Out`** stops being a projection and becomes the time you actually finished.
 
+### ⚡ Already ahead? Leave early
+
+If you put in extra hours earlier in the week, a line under the clock row spends it for you:
+
+> **1h 20m banked this week — you could leave at 6:08 PM**
+
+The surplus is measured the same way the week view measures it — everything credited on this week's earlier days, less one target per weekday. A Saturday shift is pure surplus. Today is left out of it, because today is the day you are spending it on.
+
+It only appears when there is at least **15 minutes** worth having, and only while you still have work left — no line for four spare minutes, and none once you have already hit the target.
+
 ### 🌙 Forgot to end the day?
 
 A day **stops accruing at 10 pm**. A shift left running last Tuesday reports Tuesday's hours up to 22:00 — not the 30 or 42 hours since, which would poison the week bars, the calendar and the balance.

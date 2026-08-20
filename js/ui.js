@@ -150,6 +150,92 @@
     return Store.settings().dailyTargetMinutes * 60000;
   }
 
+  /* ------------------------------------------------- banked overtime */
+
+  /* The surplus carried into today from earlier in this week, and the cache
+     that keeps it off the tick path.
+
+     Seven days summarized every second is not what the per-second render is
+     for. The figure only moves when a *past* day changes, which happens once
+     in a while through the correction form, so it is recomputed at most once a
+     minute and invalidated outright when a day is edited. */
+  var BANKED_TTL_MS = 60000;
+  var bankedCache = { key: '', at: 0, ms: 0 };
+
+  function invalidateBanked() {
+    bankedCache.key = '';
+  }
+
+  /**
+   * Credit already in hand, measured the same way the week view measures it:
+   * everything earned on the days of this week before today, less one target
+   * for each weekday among them. A weekend shift is therefore pure surplus,
+   * and a weekday with nothing on it costs a full day - a deleted day reads as
+   * "did not work", which is what it means everywhere else in the app.
+   *
+   * Today is excluded on purpose. It is the day being spent.
+   */
+  function bankedBeforeToday(now) {
+    var target = targetMs();
+    var todayKey = TL.dateKeyOf(now);
+    var key = todayKey + '|' + (Store.activePerson() || {}).id + '|' + target;
+
+    if (bankedCache.key === key && (now - bankedCache.at) < BANKED_TTL_MS) return bankedCache.ms;
+
+    var days = Store.daysOf();
+    var weekStart = startOfWeek(new Date(now));
+    var banked = 0;
+
+    for (var i = 0; i < 7; i++) {
+      var d = new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + i);
+      var dayKey = TL.dateKeyOf(d);
+      if (dayKey === todayKey || d.getTime() > now) break;
+      var day = days[dayKey];
+      var credited = day ? TL.summarize(day, clampToDay(day, now)).creditedMs : 0;
+      var isWeekend = (i === 0 || i === 6);
+      banked += credited - (isWeekend ? 0 : target);
+    }
+
+    bankedCache = { key: key, at: now, ms: banked };
+    return banked;
+  }
+
+  /* Below a quarter of an hour there is nothing worth rearranging an evening
+     for, and a line that appears for four minutes of surplus is noise. */
+  var BANKED_FLOOR_MS = 15 * 60000;
+
+  /**
+   * "1h 20m banked this week - you could leave at 6:08 PM".
+   *
+   * The finish time above it answers "when do I reach 8 hours today". This
+   * answers the question people actually have on a Thursday, which is when
+   * they can go home given what they have already put in. Spending the surplus
+   * just moves the finish earlier by however much of it there is, capped at
+   * now: banked time can bring the evening forward, it cannot rewrite the
+   * afternoon that has already happened.
+   *
+   * Shown only while there is still work left to do. Once the target is met
+   * the day is over on its own terms and the balance is the week view's story,
+   * not the timer's.
+   */
+  function renderLeaveHint(proj, state, now) {
+    if (!el.leaveHint) return;
+
+    var show = proj.finishAt && !proj.tooLate &&
+      state !== TL.STATES.ENDED && state !== 'IDLE';
+    var banked = show ? bankedBeforeToday(now) : 0;
+
+    if (!show || banked < BANKED_FLOOR_MS) {
+      el.leaveHint.hidden = true;
+      return;
+    }
+
+    var leaveAt = Math.max(now, proj.finishAt - banked);
+    el.leaveHint.hidden = false;
+    el.leaveHint.textContent = hm(banked) + ' banked this week \u2014 ' +
+      (leaveAt <= now ? 'you could leave now' : 'you could leave at ' + clockTime(leaveAt));
+  }
+
   /**
    * What the clock row's middle slot reads, label included.
    *
@@ -223,7 +309,7 @@
       'btnStart', 'btnResume', 'btnBreak', 'btnLunch', 'btnPause', 'btnEnd',
       'btnMeeting', 'btnLogMeeting', 'btnEndMeeting', 'btnEndMeetingText',
       'btnReopen', 'btnEditToday',
-      'clockInText', 'clockLeftLabel', 'clockLeftText', 'clockOutText',
+      'clockInText', 'clockLeftLabel', 'clockLeftText', 'clockOutText', 'leaveHint',
       'openShiftBanner', 'openShiftText', 'openShiftEndBtn', 'openShiftDismissBtn',
       'weeklyAverageText', 'histogramBars', 'weekDonut', 'weekRangeText', 'weekHeading',
       'weekTotalText', 'weekTargetText', 'weekBalanceText',
@@ -731,6 +817,7 @@
     // ended. `finishAt` is null in every case where a projected time would be
     // fiction - idle, ended, target already met - so the fallback covers them.
     el.clockOutText.textContent = projectedOut(proj, summary, day);
+    renderLeaveHint(proj, state, (now == null) ? Date.now() : now);
 
     var ratio = target > 0 ? summary.creditedMs / target : 0;
     var percent = Math.round(ratio * 100);
@@ -2256,6 +2343,7 @@
     shortDuration: shortDuration,
     clockTime: clockTime,
     signedBalance: signedBalance,
+    invalidateBanked: invalidateBanked,
     targetMs: targetMs,
     startOfWeek: startOfWeek,
     toast: toast,
