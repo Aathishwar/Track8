@@ -2153,62 +2153,101 @@ body.modal-open {
    screen for - the hours logged - so it gets the room, the left edge and a
    bigger number, and the others read as its supporting cast. Four equal cells
    made the eye scan all four every time to find the one that mattered. */
+/* One surface with hairline rules between the cells, not four tiles with a
+   1px gutter showing through. The gutter version repeated the sheen inside
+   every cell, so the row read as four stripes rather than one panel. */
 .summary-grid {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr 1.15fr;
-  gap: 1px;
-  background: var(--border-subtle);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  background: var(--sheen), var(--bg-surface);
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-md);
   overflow: hidden;
 }
 
 .summary-grid.three {
-  grid-template-columns: 1.4fr 1fr 1fr;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+/* Every cell aligns the same way. The old row left-aligned the first cell and
+   centred the other three, which put the headline value on a different axis
+   from the rest and read as a layout fault rather than as emphasis. Equal
+   columns for the same reason: 1.4fr/1fr/1fr/1.15fr sized the dividers by the
+   label text, so no two gaps matched. */
 .summary-cell {
   display: flex;
   flex-direction: column;
-  align-items: center;
+  align-items: flex-start;
   gap: 3px;
-  padding: 10px 4px;
-  background: var(--sheen), var(--bg-surface);
-  text-align: center;
+  min-width: 0;
+  padding: 10px;
+  text-align: left;
+  border-left: 1px solid var(--border-subtle);
 }
 
 .summary-cell:first-child {
-  align-items: flex-start;
-  padding-left: 12px;
-  text-align: left;
+  border-left: 0;
   /* A hair of the accent bleeding in from the left edge, which is what stops
-     the row reading as a table. */
-  background:
-    linear-gradient(90deg, rgba(32, 199, 181, 0.09), transparent 62%),
-    var(--sheen),
-    var(--bg-surface);
+     the row reading as a table. It is now the only thing marking the headline
+     cell, so it no longer has to fight an alignment change as well. */
+  background: linear-gradient(90deg, rgba(32, 199, 181, 0.09), transparent 62%);
 }
 
 .summary-cell:first-child .summary-value {
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .summary-label {
-  font-size: 11px;
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 10.5px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
   color: var(--text-muted);
 }
 
+/* Clamped rather than fixed: a month balance is "-111h 57m" in a quarter of a
+   phone's width, and wrapping it made that one cell two lines tall. */
 .summary-value {
+  max-width: 100%;
+  overflow: hidden;
   font-family: var(--font-mono);
-  font-size: 13px;
+  font-size: clamp(11.5px, 3.1vw, 13px);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .summary-value.positive { color: var(--accent-ink); }
-.summary-value.negative { color: var(--amber-warning); }
+
+/* The sign carries the meaning, so the colour does not have to shout it. At
+   700 the amber was the loudest thing in the card and a five-day week that had
+   barely started looked like an alarm. */
+.summary-value.negative {
+  font-weight: 600;
+  color: var(--amber-warning);
+}
+
+/* Four values across a 360px phone leaves about 60px a cell, and "6h 33m/day"
+   does not fit in it at any size worth reading. Two by two instead - the three
+   cell month row still fits on one line, so it keeps it. */
+@media (max-width: 420px) {
+  .summary-grid:not(.three) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summary-grid:not(.three) .summary-cell:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .summary-grid:not(.three) .summary-cell:nth-child(n + 3) {
+    border-top: 1px solid var(--border-subtle);
+  }
+}
+
 
 /* ----------------------------------------------------------------- calendar */
 
