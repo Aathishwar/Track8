@@ -140,6 +140,28 @@
     return next;
   }
 
+  /* A deletion has to outlive the launch that made it, or it never reaches the
+     account. Kept until well past any plausible offline stretch and then
+     dropped, so the list cannot grow without bound. */
+  var TOMBSTONE_TTL_MS = 365 * 24 * 3600 * 1000;
+
+  function normalizeTombstones(raw) {
+    var out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    var cutoff = Date.now() - TOMBSTONE_TTL_MS;
+    Object.keys(raw).forEach(function (id) {
+      var tomb = raw[id];
+      if (!tomb || typeof tomb.updatedAt !== 'number') return;
+      if (tomb.updatedAt < cutoff) return;
+      out[id] = {
+        name: typeof tomb.name === 'string' ? tomb.name : 'Removed',
+        role: typeof tomb.role === 'string' ? tomb.role : '',
+        updatedAt: tomb.updatedAt
+      };
+    });
+    return out;
+  }
+
   /**
    * Repair anything structurally missing.
    *
@@ -156,6 +178,16 @@
         return p && typeof p.id === 'string' && typeof p.name === 'string';
       }) : [],
       settings: dropRetiredSettings(Object.assign({}, DEFAULT_SETTINGS, raw.settings || {})),
+      // Both of these are load-bearing for sync and both used to be dropped
+      // here, which meant every reload quietly undid them. Without the stamp,
+      // a settings change made before the next launch is never uploaded and
+      // any settings the server still holds outrank it on the following pull -
+      // the daily target reverts to the default and stays there. Without the
+      // tombstones, a profile deleted while the server was unreachable is
+      // simply forgotten on restart, so the deletion never reaches the account
+      // and the profile returns from the next device that syncs.
+      settingsUpdatedAt: typeof raw.settingsUpdatedAt === 'number' ? raw.settingsUpdatedAt : 0,
+      deletedPersons: normalizeTombstones(raw.deletedPersons),
       days: (raw.days && typeof raw.days === 'object') ? raw.days : {}
     };
 
@@ -218,6 +250,17 @@
     return state;
   }
 
+  /* Anything that has to hear about a write. Sync is the only subscriber: a
+     change nobody offers to the server is a change that lives on one device,
+     and every mutation used to have to remember to schedule that itself -
+     profile edits, deletions and settings all forgot. A save is a transition,
+     never a per-second render, so this cannot become a tick-path cost. */
+  var changeListeners = [];
+
+  function onChange(fn) {
+    changeListeners.push(fn);
+  }
+
   function save() {
     if (!state) return;
     try {
@@ -225,6 +268,9 @@
     } catch (e) {
       console.error('Track8: could not save. Storage may be full or blocked.', e);
     }
+    changeListeners.forEach(function (fn) {
+      try { fn(); } catch (e) { /* a broken listener must not lose the write */ }
+    });
   }
 
   function get() {
@@ -459,6 +505,7 @@
     DEFAULT_SETTINGS: DEFAULT_SETTINGS,
     load: load,
     save: save,
+    onChange: onChange,
     get: get,
     touchDay: touchDay,
     settings: settings,

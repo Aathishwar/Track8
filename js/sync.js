@@ -24,6 +24,7 @@
   var syncAvailable = null;    // null until the server has been asked
   var running = false;
   var queued = false;
+  var applying = false;        // true while the server's own changes are being written
   var listeners = [];
 
   var lastResult = { at: 0, ok: null, error: '', conflicts: 0 };
@@ -244,91 +245,119 @@
     var state = Store.get();
     var changed = false;
 
-    (data.profiles || []).forEach(function (incoming) {
-      if (incoming.deleted) {
-        var before = state.persons.length;
-        state.persons = state.persons.filter(function (p) { return p.id !== incoming.clientId; });
-        delete state.days[incoming.clientId];
-        if (state.persons.length !== before) changed = true;
-        return;
-      }
+    // Every store write asks for a sync (Store.onChange), and everything below
+    // is a store write. Held for the whole function, not just the final save,
+    // because Store.addPerson saves on its own.
+    applying = true;
+    try {
+      (data.profiles || []).forEach(function (incoming) {
+        if (incoming.deleted) {
+          var before = state.persons.length;
+          state.persons = state.persons.filter(function (p) { return p.id !== incoming.clientId; });
+          delete state.days[incoming.clientId];
+          if (state.persons.length !== before) changed = true;
+          return;
+        }
 
-      var person = state.persons.find(function (p) { return p.id === incoming.clientId; });
-      if (!person) {
-        state.persons.push({
-          id: incoming.clientId, name: incoming.name, role: incoming.role,
-          createdAt: incoming.updatedAt, updatedAt: incoming.updatedAt
-        });
-        state.days[incoming.clientId] = state.days[incoming.clientId] || {};
+        var person = state.persons.find(function (p) { return p.id === incoming.clientId; });
+        if (!person) {
+          state.persons.push({
+            id: incoming.clientId, name: incoming.name, role: incoming.role,
+            createdAt: incoming.updatedAt, updatedAt: incoming.updatedAt
+          });
+          state.days[incoming.clientId] = state.days[incoming.clientId] || {};
+          changed = true;
+        } else if ((incoming.updatedAt || 0) > (person.updatedAt || 0)) {
+          person.name = incoming.name;
+          person.role = incoming.role;
+          person.updatedAt = incoming.updatedAt;
+          changed = true;
+        }
+      });
+
+      (data.days || []).forEach(function (incoming) {
+        if (!state.days[incoming.profileClientId]) state.days[incoming.profileClientId] = {};
+        var bucket = state.days[incoming.profileClientId];
+        var existing = bucket[incoming.dateKey];
+
+        // Last write wins, and the server already applied the same rule, so this
+        // only matters for a day edited locally while the response was in flight.
+        if (existing && (existing.updatedAt || 0) >= (incoming.updatedAt || 0)) return;
+
+        bucket[incoming.dateKey] = {
+          dateKey: incoming.dateKey,
+          events: incoming.events || [],
+          note: incoming.note || '',
+          deleted: !!incoming.deleted,
+          updatedAt: incoming.updatedAt
+        };
         changed = true;
-      } else if ((incoming.updatedAt || 0) > (person.updatedAt || 0)) {
-        person.name = incoming.name;
-        person.role = incoming.role;
-        person.updatedAt = incoming.updatedAt;
+      });
+
+      if (data.settings && data.settings.value) {
+        if ((data.settings.updatedAt || 0) > (state.settingsUpdatedAt || 0)) {
+          Object.assign(state.settings, data.settings.value);
+          state.settingsUpdatedAt = data.settings.updatedAt;
+          changed = true;
+        }
+        // The account has already answered the setup questions on some device.
+        // A browser that lost its storage - eviction under pressure clears
+        // localStorage while leaving the session cookie alone, which is why the
+        // app can come back logged in and otherwise brand new - would otherwise
+        // ask for the daily target again and overwrite the account's answer with
+        // whatever was typed in a hurry.
+        Store.markSeen('setup');
+      }
+
+      // Retire the empty starter profile once the account's real one has
+      // arrived. Without this, signing in on a new device leaves you looking at
+      // two people - the account's, and the placeholder this device happened to
+      // create before it knew who you were. Removed outright rather than
+      // tombstoned, because it was never uploaded and so does not exist anywhere
+      // else to delete.
+      // Only a placeholder the server has never heard of. A profile genuinely
+      // named "Me" on the account is somebody's actual profile: retiring that
+      // would delete it here and then pull it straight back on the next full
+      // sync, flickering forever.
+      var known = {};
+      (data.profiles || []).forEach(function (p) { known[p.clientId] = true; });
+
+      var retired = state.persons.filter(function (p) {
+        return isUntouchedDefault(state, p) && !known[p.id];
+      });
+      var keep = state.persons.filter(function (p) { return retired.indexOf(p) === -1; });
+
+      if (retired.length && keep.length) {
+        retired.forEach(function (p) { delete state.days[p.id]; });
+        state.persons = keep;
+        if (retired.some(function (p) { return p.id === state.activePersonId; })) {
+          state.activePersonId = keep[0].id;
+        }
         changed = true;
       }
-    });
 
-    (data.days || []).forEach(function (incoming) {
-      if (!state.days[incoming.profileClientId]) state.days[incoming.profileClientId] = {};
-      var bucket = state.days[incoming.profileClientId];
-      var existing = bucket[incoming.dateKey];
+      // The active profile may have been removed on another device.
+      if (!state.persons.some(function (p) { return p.id === state.activePersonId; })) {
+        if (state.persons.length) state.activePersonId = state.persons[0].id;
+      }
 
-      // Last write wins, and the server already applied the same rule, so this
-      // only matters for a day edited locally while the response was in flight.
-      if (existing && (existing.updatedAt || 0) >= (incoming.updatedAt || 0)) return;
-
-      bucket[incoming.dateKey] = {
-        dateKey: incoming.dateKey,
-        events: incoming.events || [],
-        note: incoming.note || '',
-        deleted: !!incoming.deleted,
-        updatedAt: incoming.updatedAt
-      };
-      changed = true;
-    });
-
-    if (data.settings && data.settings.value) {
-      if ((data.settings.updatedAt || 0) > (state.settingsUpdatedAt || 0)) {
-        Object.assign(state.settings, data.settings.value);
-        state.settingsUpdatedAt = data.settings.updatedAt;
+      // Deleting the account's last profile elsewhere used to leave this device
+      // with an empty persons list, which normalize() reads as unusable and
+      // replaces with a whole new empty state on the next launch: new profile id,
+      // default settings, no history. Store.removePerson refuses to remove the
+      // last one for the same reason, so the pull has to hold the same line.
+      if (!state.persons.length) {
+        // An empty slot, exactly like the one store.js mints on a fresh device:
+        // localChanges() skips it, so it does not put one profile per device on
+        // the account.
+        Store.addPerson('Me', '');
         changed = true;
       }
+
+      if (changed) Store.save();
+    } finally {
+      applying = false;
     }
-
-    // Retire the empty starter profile once the account's real one has
-    // arrived. Without this, signing in on a new device leaves you looking at
-    // two people - the account's, and the placeholder this device happened to
-    // create before it knew who you were. Removed outright rather than
-    // tombstoned, because it was never uploaded and so does not exist anywhere
-    // else to delete.
-    // Only a placeholder the server has never heard of. A profile genuinely
-    // named "Me" on the account is somebody's actual profile: retiring that
-    // would delete it here and then pull it straight back on the next full
-    // sync, flickering forever.
-    var known = {};
-    (data.profiles || []).forEach(function (p) { known[p.clientId] = true; });
-
-    var retired = state.persons.filter(function (p) {
-      return isUntouchedDefault(state, p) && !known[p.id];
-    });
-    var keep = state.persons.filter(function (p) { return retired.indexOf(p) === -1; });
-
-    if (retired.length && keep.length) {
-      retired.forEach(function (p) { delete state.days[p.id]; });
-      state.persons = keep;
-      if (retired.some(function (p) { return p.id === state.activePersonId; })) {
-        state.activePersonId = keep[0].id;
-      }
-      changed = true;
-    }
-
-    // The active profile may have been removed on another device.
-    if (!state.persons.some(function (p) { return p.id === state.activePersonId; })) {
-      if (state.persons.length) state.activePersonId = state.persons[0].id;
-    }
-
-    if (changed) Store.save();
     return changed;
   }
 
@@ -389,6 +418,10 @@
 
   /** Coalesce the burst of calls a single user action can produce. */
   function schedule(reason, delay) {
+    // Every store write asks for a sync, and applying the server's own answer
+    // is a store write. Without this the response to one sync schedules the
+    // next one forever.
+    if (applying) return;
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(function () { run(reason); }, delay == null ? 1500 : delay);
   }
@@ -407,11 +440,32 @@
     };
   }
 
+  /* A device only ever learned about another device's changes when something
+     happened on this one - a launch, a tab being brought back, a tap. A laptop
+     left open on the timer never asked again, so a day corrected on the phone
+     stayed wrong on screen for the rest of the afternoon. Pulling is the half
+     that has no local trigger by definition, so it needs a clock of its own.
+
+     Two minutes, and only while the tab is actually being looked at: an
+     unattended tab costs nothing, and a visible one is exactly where a stale
+     figure is being read. run() is a no-op when there is no account, no
+     network or no server, so this is free on a static host. */
+  var POLL_MS = 120 * 1000;
+
   function init() {
     global.addEventListener('online', function () { run('online'); });
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'visible') schedule('visible', 300);
     });
+    // A second window of the same app, or an alt-tab back on a desktop that
+    // never fires visibilitychange for it.
+    global.addEventListener('focus', function () { schedule('focus', 300); });
+
+    setInterval(function () {
+      if (document.visibilityState !== 'visible') return;
+      run('poll');
+    }, POLL_MS);
+
     return refresh().then(function (data) {
       if (data.signedIn) run('boot');
       return data;

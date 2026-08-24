@@ -888,6 +888,18 @@
    * than being shown seven and then asked to go and find them.
    */
   function maybeOnboard() {
+    // A signed-in device whose storage was evicted comes back looking brand
+    // new - localStorage goes, the session cookie stays - and its first sync is
+    // about to restore the profiles, the days and the daily target. Asking for
+    // that target first means answering a question the account has already
+    // answered, with the answer landing on top of everyone else's. Waiting for
+    // the first sync of this launch costs a fresh install nothing: it has no
+    // account, so there is nothing to wait for.
+    // Only while that sync can actually happen: offline, the restore is not
+    // coming and holding the setup back would leave a blank first launch.
+    var sync = Sync.status();
+    if (sync.signedIn && sync.available && sync.online && !sync.lastSyncAt) return;
+
     if (!Store.seen('setup')) {
       if (document.querySelector('.modal-overlay.open')) return;
       UI.fillSetupForm();
@@ -1686,6 +1698,15 @@
       updateSigninGate();
       if (!el.settingsModal.hidden) UI.fillSettingsForm(Notify);
     });
+
+    // One subscription instead of a Sync.schedule() at every call site that
+    // changes something. The ones that were missing it - creating, renaming or
+    // deleting a profile, and every settings change - only ever reached the
+    // server if the user happened to tap Start or Break afterwards in the same
+    // session, so a profile deleted on a phone stayed on the account and came
+    // back from the next device to sync.
+    Store.onChange(function () { Sync.schedule('store'); });
+
     Sync.init();
 
     // The pinned notification's buttons, relayed by the worker to this page.
